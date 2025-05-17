@@ -1,0 +1,26 @@
+# pyproject.toml
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lean_explore"
+version = "0.1.0"
+description = "A project to explore and rank Lean mathematical declarations."
+# readme = "README.md" # Optional: if you have a README
+# requires-python = ">=3.8" # Optional: specify Python version
+
+# Add your project's dependencies here
+# For example:
+# dependencies = [
+#     "numpy",
+#     "pandas",
+#     "faiss-cpu", # or faiss-gpu if you use that
+#     "torch",
+#     "transformers",
+#     "streamlit" # For your app/ directory
+# ]
+
+[tool.setuptools.packages.find]
+where = ["src"] # This tells setuptools to look for your package(s) in the 'src' directory
