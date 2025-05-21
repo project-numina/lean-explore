@@ -23,6 +23,15 @@ from dataclasses import dataclass, field # Removed unused 'field'
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+# --- Project Path Setup for Imports ---
+# (Ensure 'sys' and 'from pathlib import Path' have been imported above this block)
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SCRIPT_DIR.parent
+
+# Add project root to sys.path to reliably import 'dev_tools'
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 # --- Dependency Imports ---
 try:
     from sqlalchemy import create_engine, inspect, select, update
@@ -46,15 +55,32 @@ except ImportError:
 
 # --- Project Model & Config/LLM Imports ---
 try:
+    # For 'lean_explore' modules, ensure 'lean_explore' is installed (e.g., 'pip install -e .')
+    # or the 'src/' directory is added to sys.path. 'pip install -e .' is recommended.
     from lean_explore.models import Declaration, StatementGroup, StatementGroupDependency
     from lean_explore.config import APP_CONFIG, get_gemini_api_key
-    from lean_explore.llm_caller import GeminiClient, GeminiCostTracker
+
+    # For 'dev_tools.llm_caller', ensure PROJECT_ROOT is in sys.path.
+    from dev_tools.llm_caller import GeminiClient, GeminiCostTracker
 except ImportError as e:
     # pylint: disable=broad-exception-raised
     print(
-        f"Error: Could not import project modules: {e}\n"
-        "Ensure 'lean_explore' is installed (e.g., 'pip install -e .') "
-        "and dependencies are met.",
+        f"Error: Could not import project modules: {e}\n\n"
+        "POSSIBLE CAUSES & SOLUTIONS:\n"
+        "1. RUNNING LOCATION: Ensure you are running this script from the project's ROOT directory,\n"
+        "   e.g., 'python scripts/lean_to_english.py'.\n\n"
+        "2. FOR 'lean_explore' (e.g., models, config):\n"
+        "   - RECOMMENDED: The 'lean_explore' package might not be installed in your current Python environment.\n"
+        "     From your project root, run: 'pip install -e .'\n"
+        "     This installs it in editable mode, making it available.\n"
+        "   - Alternatively (if not using editable install), ensure the 'src/' directory is correctly added to sys.path.\n\n"
+        "3. FOR 'dev_tools.llm_caller':\n"
+        "   - The 'dev_tools/' directory (containing 'llm_caller.py' and an '__init__.py' file)\n"
+        "     must be at the project root.\n"
+        "   - The script attempts to add the project root to sys.path (this should now happen before the import attempt);\n"
+        "     verify this is working for your environment if issues persist.\n"
+        "     You might need to set your PYTHONPATH environment variable to include the project root.\n\n"
+        f"Current sys.path (at time of error): {sys.path}",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -64,7 +90,6 @@ except Exception as e: # pylint: disable=broad-except
         file=sys.stderr,
     )
     sys.exit(1)
-
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -581,12 +606,41 @@ async def process_statement_groups_with_llm(
         return False
     client: GeminiClient
     try:
+        llm_config = APP_CONFIG.get("llm", {})
+        generation_model_name = llm_config.get("generation_model")
+
+        if not generation_model_name:
+            logger.error(
+                "Configuration error: 'llm.generation_model' is not set in your config.yml "
+                "or via the DEFAULT_GENERATION_MODEL environment variable. "
+                "Cannot initialize GeminiClient."
+            )
+            return False # Abort if model name isn't found in the loaded config
+
         cost_tracker = GeminiCostTracker(model_costs_override=APP_CONFIG.get("costs"))
-        client = GeminiClient(api_key=api_key, cost_tracker=cost_tracker)
-        logger.info("Using Generation Model: %s", client.default_generation_model)
-    except Exception as e:
-        logger.error("Failed to initialize GeminiClient: %s", e, exc_info=True)
+        client = GeminiClient(
+            api_key=api_key,
+            cost_tracker=cost_tracker,
+            default_generation_model=generation_model_name # Explicitly pass the model name
+        )
+        # This log line should now correctly reflect the model passed.
+        # If GeminiClient sets an attribute like 'self.default_generation_model', this will show it.
+        logger.info("GeminiClient initialized to use Generation Model: %s", generation_model_name)
+
+    except ValueError as ve: # Catch the specific ValueError from GeminiClient if it still occurs
+        logger.error(
+            "Failed to initialize GeminiClient: %s. This might happen if the model name is invalid "
+            "or other internal GeminiClient setup fails.", ve, exc_info=True
+        )
+        logger.error(
+            "Please ensure 'llm.generation_model' is correctly specified in your 'config.yml' "
+            "(e.g., 'gemini-1.5-pro-latest') or set the 'DEFAULT_GENERATION_MODEL' environment variable."
+        )
         return False
+    except Exception as e: # Catch other unexpected errors during initialization
+        logger.error("An unexpected error occurred while initializing GeminiClient: %s", e, exc_info=True)
+        return False
+
 
     engine = None
     SessionLocal = None

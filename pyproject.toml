@@ -5,22 +5,43 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lean_explore"
+name = "lean-explore" # Distribution name on PyPI
 version = "0.1.0"
-description = "A project to explore and rank Lean mathematical declarations."
-# readme = "README.md" # Optional: if you have a README
-# requires-python = ">=3.8" # Optional: specify Python version
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }, # Update with your details
+]
+description = "A project to explore and rank Lean mathematical declarations." # Your existing description
+readme = "README.md" # Assumes README.md is in the project root
+requires-python = ">=3.8" # Minimum Python version supported
+license = { file = "LICENSE" } # Specify your license file (e.g., LICENSE)
+keywords = ["lean", "lean4", "search", "formal methods", "theorem prover", "math", "AI"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Text Processing :: Indexing",
+]
 
-# Add your project's dependencies here
-# For example:
-# dependencies = [
-#     "numpy",
-#     "pandas",
-#     "faiss-cpu", # or faiss-gpu if you use that
-#     "torch",
-#     "transformers",
-#     "streamlit" # For your app/ directory
-# ]
+# Runtime dependencies required for the package to function
+dependencies = [
+    "sqlalchemy>=1.4",      # For database models and interaction
+    "requests>=2.25",       # For API client and data downloading
+    "numpy>=1.20",          # For embeddings and FAISS
+    "faiss-cpu>=1.7",       # For local FAISS search; "faiss-gpu" is an alternative
+    "python-dotenv>=0.15",  # Used by src/lean_explore/config.py
+    "PyYAML>=5.4",          # Used by src/lean_explore/config.py
+    "tqdm>=4.60",           # For progress bars, e.g., in data downloaders
+    # Add any other core runtime dependencies for src/lean_explore/
+]
 
 [tool.setuptools.packages.find]
-where = ["src"] # This tells setuptools to look for your package(s) in the 'src' directory
+where = ["src"] # Locates the 'lean_explore' package within the 'src' directory

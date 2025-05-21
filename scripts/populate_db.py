@@ -26,29 +26,42 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 # --- Import model and phase-specific functions ---
 try:
     from lean_explore.models import Base  # For table creation/dropping
-    from lean_explore.population.phase1_tasks import phase1_populate_declarations_initial
-    from lean_explore.population.phase2_tasks import phase2_refine_declarations_source_info
-    from lean_explore.population.phase3_tasks import phase3_group_statements
-    from lean_explore.population.phase4_tasks import populate_dependencies
-    from lean_explore.population.phase5_tasks import populate_statement_group_dependencies
+    from dev_tools.population.phase1_tasks import phase1_populate_declarations_initial
+    from dev_tools.population.phase2_tasks import phase2_refine_declarations_source_info
+    from dev_tools.population.phase3_tasks import phase3_group_statements
+    from dev_tools.population.phase4_tasks import populate_dependencies
+    from dev_tools.population.phase5_tasks import populate_statement_group_dependencies
 except ImportError as e:
     # pylint: disable=broad-exception-raised
     print(
-        f"Error: Could not import necessary modules: {e}\n"
-        "Ensure 'lean_explore' is installed (e.g., 'pip install -e .') and "
-        "that the population phase modules (e.g., phase1_tasks.py) "
-        "exist within 'src/lean_explore/population/'.",
+        f"Error: Could not import necessary modules: {e}\n\n"
+        "POSSIBLE CAUSES & SOLUTIONS:\n"
+        "1. RUNNING LOCATION: Ensure you are running this script from the project's ROOT directory,\n"
+        "   e.g., 'python scripts/populate_db.py'.\n\n"
+        "2. FOR 'lean_explore' (e.g., models):\n"
+        "   - RECOMMENDED: The 'lean_explore' package might not be installed in your current Python environment.\n"
+        "     From your project root, run: 'pip install -e .'\n"
+        "     This installs it in editable mode, making it available.\n"
+        "   - Alternatively (if not using editable install), ensure the 'src/' directory is correctly added to sys.path.\n\n"
+        "3. FOR 'dev_tools.population' (e.g., phaseX_tasks):\n"
+        "   - The 'dev_tools/' directory (containing 'population/' and '__init__.py' files)\n"
+        "     must be at the project root.\n"
+        "   - The script attempts to add the project root to sys.path; verify this is working for your environment.\n"
+        "     You might need to set your PYTHONPATH environment variable to include the project root.\n\n"
+        f"Current sys.path: {sys.path}",
         file=sys.stderr,
     )
     sys.exit(1)
 
 
 # --- Default Path Constants (relative to project root) ---
-# Assumes this script is in 'scripts/', and 'data/' & 'extractor/' are in the project root.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 
 # Default locations for primary data files
