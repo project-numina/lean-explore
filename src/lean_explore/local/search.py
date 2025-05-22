@@ -4,16 +4,16 @@
 
 Combines semantic similarity from FAISS, pre-scaled PageRank scores, and
 Lean name matching to rank StatementGroups. It loads necessary assets
-(embedding model, FAISS index, ID map), embeds the user query, performs
-FAISS search for relevant text chunks, aggregates results to the
-StatementGroup level, filters based on a similarity threshold (read from
-configuration), retrieves group details from the database, calculates
+(embedding model, FAISS index, ID map) using default configurations,
+embeds the user query, performs FAISS search, filters based on a
+similarity threshold, retrieves group details from the database, calculates
 a name match score, normalizes semantic similarity scores, and then combines
 these scores using configurable weights to produce a final ranked list.
+It also logs search performance statistics to a dedicated JSONL file.
 """
 
 import argparse
-from filelock import Timeout, FileLock
+import datetime
 import json
 import logging
 import os
@@ -21,6 +21,8 @@ import pathlib
 import sys
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+from filelock import Timeout, FileLock
 
 # --- Dependency Imports ---
 try:
@@ -36,19 +38,19 @@ except ImportError as e:
     print(
         f"Error: Missing required libraries ({e}).\n"
         "Please install them: pip install SQLAlchemy faiss-cpu "
-        "sentence-transformers numpy rapidfuzz",
+        "sentence-transformers numpy rapidfuzz filelock",
         file=sys.stderr,
     )
     sys.exit(1)
 
-# --- Project Model & Config Imports ---
+# --- Project Model & Default Config Imports ---
 try:
-    from lean_explore.models import StatementGroup
-    from lean_explore.config import APP_CONFIG # APP_CONFIG is used directly now
+    from lean_explore.shared.models.db import StatementGroup
+    from lean_explore import defaults # Using the new defaults module
 except ImportError as e:
     # pylint: disable=broad-exception-raised
     print(
-        f"Error: Could not import project modules (StatementGroup, APP_CONFIG): {e}\n"
+        f"Error: Could not import project modules (StatementGroup, defaults): {e}\n"
         "Ensure 'lean_explore' is installed (e.g., 'pip install -e .') "
         "and all dependencies are met.",
         file=sys.stderr,
@@ -67,9 +69,12 @@ logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # --- Constants ---
-NEWLINE = os.linesep # For platform-independent newline handling in print_results
-EPSILON = 1e-9 # Small constant to prevent division by zero in normalization
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+NEWLINE = os.linesep
+EPSILON = 1e-9
+# PROJECT_ROOT might be less relevant for asset paths if defaults.py provides absolute paths
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent 
+
+# Performance Logging Constants (assuming these are for a specific deployment environment)
 PERFORMANCE_LOG_DIR = "/var/log/lean_explore"
 PERFORMANCE_LOG_FILENAME = "search_stats.jsonl"
 PERFORMANCE_LOG_PATH = os.path.join(PERFORMANCE_LOG_DIR, PERFORMANCE_LOG_FILENAME)
@@ -91,399 +96,7 @@ def calculate_name_match_score(query_string: str, lean_name: str) -> float:
         lean_name: The Lean declaration name.
 
     Returns:
-        float: A score between 0.0 and 1.0. Returns 0.0 if inputs are empty.
-    """
-    if not query_string or not lean_name:
-        return 0.0
-
-    norm_query = query_string.lower()
-    norm_lean_name = lean_name.lower()
-
-    # WRatio returns 0-100, normalize to 0-1
-    score = fuzz.WRatio(norm_query, norm_lean_name) / 100.0
-
-    # Apply thresholding and re-scaling
-    threshold = 0.90  # Configurable threshold for name matching significance
-    if score < threshold:
-        mapped_score = 0.0
-    else:
-        # Linearly scale scores from [threshold, 1.0] to [0.0, 1.0]
-        scale_factor = 1.0 / (1.0 - threshold + EPSILON) # Add EPSILON if threshold can be 1.0
-        offset = -threshold * scale_factor
-        mapped_score = (scale_factor * score) + offset
-        mapped_score = min(1.0, max(0.0, mapped_score)) # Clamp to [0,1]
-
-    return mapped_score
-
-
-# --- Asset Loading Functions ---
-
-def load_faiss_assets(
-    index_path_str: str, map_path_str: str
-) -> Tuple[Optional[faiss.Index], Optional[List[str]]]:
-    """Loads the FAISS index and ID map from specified file paths.
-
-    Args:
-        index_path_str: String path to the FAISS index file.
-        map_path_str: String path to the JSON ID map file.
-
-    Returns:
-        A tuple (faiss.Index or None, list_of_IDs or None).
-        Returns (None, None) or partially loaded assets if errors occur.
-    """
-    index_path = pathlib.Path(index_path_str).resolve()
-    map_path = pathlib.Path(map_path_str).resolve()
-
-    if not index_path.exists():
-        logger.error("FAISS index file not found: %s", index_path)
-        return None, None
-    if not map_path.exists():
-        logger.error("FAISS ID map file not found: %s", map_path)
-        return None, None
-
-    faiss_index_obj: Optional[faiss.Index] = None
-    id_map_list: Optional[List[str]] = None
-
-    try:
-        logger.info("Loading FAISS index from %s...", index_path)
-        faiss_index_obj = faiss.read_index(str(index_path))
-        logger.info(
-            "Loaded FAISS index with %d vectors (Metric Type: %s).",
-            faiss_index_obj.ntotal,
-            faiss_index_obj.metric_type,
-        )
-    except Exception as e: # pylint: disable=broad-except
-        logger.error("Failed to load FAISS index: %s", e, exc_info=True)
-        return None, id_map_list # Return whatever was loaded so far
-
-    try:
-        logger.info("Loading ID map from %s...", map_path)
-        with open(map_path, "r", encoding="utf-8") as f:
-            id_map_list = json.load(f)
-        if not isinstance(id_map_list, list):
-            logger.error(
-                "ID map file (%s) does not contain a valid JSON list.", map_path
-            )
-            return faiss_index_obj, None
-        logger.info("Loaded ID map with %d entries.", len(id_map_list))
-    except Exception as e: # pylint: disable=broad-except
-        logger.error("Failed to load or parse ID map file: %s", e, exc_info=True)
-        return faiss_index_obj, None
-
-    if (
-        faiss_index_obj is not None
-        and id_map_list is not None
-        and faiss_index_obj.ntotal != len(id_map_list)
-    ):
-        logger.warning(
-            "Mismatch: FAISS index size (%d) vs ID map size (%d). Results may be inconsistent.",
-            faiss_index_obj.ntotal,
-            len(id_map_list),
-        )
-    return faiss_index_obj, id_map_list
-
-
-def load_embedding_model(model_name: str) -> Optional[SentenceTransformer]:
-    """Loads the specified Sentence Transformer model.
-
-    Args:
-        model_name: The name or path of the sentence-transformer model.
-
-    Returns:
-        SentenceTransformer: The loaded model, or None if loading fails.
-    """
-    logger.info("Loading sentence transformer model '%s'...", model_name)
-    try:
-        model = SentenceTransformer(model_name)
-        logger.info(
-            "Model '%s' loaded successfully. Max sequence length: %d.",
-            model_name,
-            model.max_seq_length,
-        )
-        return model
-    except Exception as e: # pylint: disable=broad-except
-        logger.error("Failed to load model '%s': %s", model_name, e, exc_info=True)
-        return None
-
-# File: src/lean_explore/search.py
-
-"""Performs semantic search and ranked retrieval of StatementGroups.
-
-Combines semantic similarity from FAISS, pre-scaled PageRank scores, and
-Lean name matching to rank StatementGroups. It loads necessary assets
-(embedding model, FAISS index, ID map), embeds the user query, performs
-FAISS search for relevant text chunks, aggregates results to the
-StatementGroup level, filters based on a similarity threshold (read from
-configuration), retrieves group details from the database, calculates
-a name match score, normalizes semantic similarity scores, and then combines
-these scores using configurable weights to produce a final ranked list.
-It also logs search performance statistics to a dedicated JSONL file.
-"""
-
-import argparse
-import datetime # Added for performance logging
-import json
-import logging
-import os
-import pathlib
-import sys
-import time
-from typing import Any, Dict, List, Optional, Set, Tuple
-
-from filelock import Timeout, FileLock # Added for performance logging
-
-# --- Dependency Imports ---
-try:
-    import faiss
-    import numpy as np
-    from rapidfuzz import fuzz # Using rapidfuzz for name matching
-    from sentence_transformers import SentenceTransformer
-    from sqlalchemy import create_engine, select
-    from sqlalchemy.exc import OperationalError, SQLAlchemyError
-    from sqlalchemy.orm import Session, joinedload, sessionmaker
-except ImportError as e:
-    # pylint: disable=broad-exception-raised
-    print(
-        f"Error: Missing required libraries ({e}).\n"
-        "Please install them: pip install SQLAlchemy faiss-cpu "
-        "sentence-transformers numpy rapidfuzz filelock", # Added filelock
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-# --- Project Model & Config Imports ---
-try:
-    from lean_explore.models import StatementGroup
-    from lean_explore.config import APP_CONFIG
-except ImportError as e:
-    # pylint: disable=broad-exception-raised
-    print(
-        f"Error: Could not import project modules (StatementGroup, APP_CONFIG): {e}\n"
-        "Ensure 'lean_explore' is installed (e.g., 'pip install -e .') "
-        "and all dependencies are met.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-
-# --- Logging Setup ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
-logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
-logger = logging.getLogger(__name__)
-
-# --- Constants ---
-NEWLINE = os.linesep # For platform-independent newline handling in print_results
-EPSILON = 1e-9 # Small constant to prevent division by zero in normalization
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-
-# Performance Logging Constants
-PERFORMANCE_LOG_DIR = "/var/log/lean_explore"
-PERFORMANCE_LOG_FILENAME = "search_stats.jsonl"
-PERFORMANCE_LOG_PATH = os.path.join(PERFORMANCE_LOG_DIR, PERFORMANCE_LOG_FILENAME)
-LOCK_PATH = os.path.join(PERFORMANCE_LOG_DIR, f"{PERFORMANCE_LOG_FILENAME}.lock")
-
-
-# --- Helper & Scoring Functions ---
-
-def calculate_name_match_score(query_string: str, lean_name: str) -> float:
-    """Calculates a name match score using fuzzy matching (WRatio), possibly mapped.
-
-    Compares the lowercased query string and Lean name using `fuzz.WRatio`.
-    The raw WRatio (0-100) is normalized to 0-1. Then, a threshold-based
-    mapping is applied: scores below a threshold become 0, and scores above
-    are linearly scaled to the 0-1 range.
-
-    Args:
-        query_string: The user's search query.
-        lean_name: The Lean declaration name.
-
-    Returns:
-        float: A score between 0.0 and 1.0. Returns 0.0 if inputs are empty.
-    """
-    if not query_string or not lean_name:
-        return 0.0
-
-    norm_query = query_string.lower()
-    norm_lean_name = lean_name.lower()
-
-    score = fuzz.WRatio(norm_query, norm_lean_name) / 100.0
-
-    threshold = 0.90
-    if score < threshold:
-        mapped_score = 0.0
-    else:
-        scale_factor = 1.0 / (1.0 - threshold + EPSILON)
-        offset = -threshold * scale_factor
-        mapped_score = (scale_factor * score) + offset
-        mapped_score = min(1.0, max(0.0, mapped_score))
-
-    return mapped_score
-
-
-def log_search_event_to_json(status: str, duration_ms: float, results_count: int, error_type: Optional[str] = None) -> None:
-    """Logs a search event as a JSON line to a dedicated performance log file.
-
-    This function constructs a structured log entry containing details about a
-    search event, such as its status, duration, and the number of results.
-    It uses file locking to ensure safe concurrent writes from multiple
-    processes or threads to a JSON Lines formatted file.
-
-    Args:
-        status: A string code indicating the outcome of the search
-            (e.g., "SUCCESS", "EMPTY_QUERY_SUBMITTED", "ERROR_EMBEDDING").
-        duration_ms: The total duration of the search processing in milliseconds.
-        results_count: The number of search results returned.
-        error_type: Optional. The type of error if the status indicates
-            an error (e.g., "ValueError", "TypeError").
-    """
-    log_entry = {
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-        "event": "search_processed",
-        "status": status,
-        "duration_ms": round(duration_ms, 2),
-        "results_count": results_count,
-    }
-    if error_type:
-        log_entry["error_type"] = error_type
-
-    # Ensure the log directory exists. This check is lightweight.
-    # For high-performance scenarios, ensure directory exists at application startup.
-    try:
-        os.makedirs(PERFORMANCE_LOG_DIR, exist_ok=True)
-    except OSError as e:
-        logger.error(
-            "Performance logging error: Could not create log directory %s: %s. Log entry: %s",
-            PERFORMANCE_LOG_DIR, e, log_entry, exc_info=True
-        )
-        # Fallback: print to standard error if directory creation fails, so log is not entirely lost.
-        print(f"FALLBACK_PERF_LOG (DIR_ERROR): {json.dumps(log_entry)}", file=sys.stderr)
-        return
-
-    lock = FileLock(LOCK_PATH, timeout=2)  # Timeout for lock acquisition in seconds.
-    try:
-        with lock:
-            with open(PERFORMANCE_LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(json.dumps(log_entry) + "\n")
-    except Timeout:
-        logger.error(
-            "Performance logging error: Timeout acquiring lock for %s. Log entry lost: %s",
-            LOCK_PATH, log_entry
-        )
-        print(f"FALLBACK_PERF_LOG (LOCK_TIMEOUT): {json.dumps(log_entry)}", file=sys.stderr)
-    except Exception as e:
-        logger.error(
-            "Performance logging error: Failed to write to %s: %s. Log entry lost: %s",
-            PERFORMANCE_LOG_PATH, e, log_entry, exc_info=True
-        )
-        print(f"FALLBACK_PERF_LOG (WRITE_ERROR): {json.dumps(log_entry)}", file=sys.stderr)
-
-
-# --- Main Search Function ---
-
-# File: src/lean_explore/search.py
-
-"""Performs semantic search and ranked retrieval of StatementGroups.
-
-Combines semantic similarity from FAISS, pre-scaled PageRank scores, and
-Lean name matching to rank StatementGroups. It loads necessary assets
-(embedding model, FAISS index, ID map), embeds the user query, performs
-FAISS search for relevant text chunks, aggregates results to the
-StatementGroup level, filters based on a similarity threshold (read from
-configuration), retrieves group details from the database, calculates
-a name match score, normalizes semantic similarity scores, and then combines
-these scores using configurable weights to produce a final ranked list.
-It also logs search performance statistics to a dedicated JSONL file.
-"""
-
-import argparse
-import datetime # Added for performance logging
-import json
-import logging
-import os
-import pathlib
-import sys
-import time
-from typing import Any, Dict, List, Optional, Set, Tuple
-
-from filelock import Timeout, FileLock # Added for performance logging
-
-# --- Dependency Imports ---
-try:
-    import faiss
-    import numpy as np
-    from rapidfuzz import fuzz # Using rapidfuzz for name matching
-    from sentence_transformers import SentenceTransformer
-    from sqlalchemy import create_engine, select
-    from sqlalchemy.exc import OperationalError, SQLAlchemyError
-    from sqlalchemy.orm import Session, joinedload, sessionmaker
-except ImportError as e:
-    # pylint: disable=broad-exception-raised
-    print(
-        f"Error: Missing required libraries ({e}).\n"
-        "Please install them: pip install SQLAlchemy faiss-cpu "
-        "sentence-transformers numpy rapidfuzz filelock", # Added filelock
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-# --- Project Model & Config Imports ---
-try:
-    from lean_explore.models import StatementGroup
-    from lean_explore.config import APP_CONFIG
-except ImportError as e:
-    # pylint: disable=broad-exception-raised
-    print(
-        f"Error: Could not import project modules (StatementGroup, APP_CONFIG): {e}\n"
-        "Ensure 'lean_explore' is installed (e.g., 'pip install -e .') "
-        "and all dependencies are met.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-
-# --- Logging Setup ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
-logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
-logger = logging.getLogger(__name__)
-
-# --- Constants ---
-NEWLINE = os.linesep # For platform-independent newline handling in print_results
-EPSILON = 1e-9 # Small constant to prevent division by zero in normalization
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-
-# Performance Logging Constants
-PERFORMANCE_LOG_DIR = "/var/log/lean_explore"
-PERFORMANCE_LOG_FILENAME = "search_stats.jsonl"
-PERFORMANCE_LOG_PATH = os.path.join(PERFORMANCE_LOG_DIR, PERFORMANCE_LOG_FILENAME)
-LOCK_PATH = os.path.join(PERFORMANCE_LOG_DIR, f"{PERFORMANCE_LOG_FILENAME}.lock")
-
-
-# --- Helper & Scoring Functions ---
-
-def calculate_name_match_score(query_string: str, lean_name: str) -> float:
-    """Calculates a name match score using fuzzy matching (WRatio), possibly mapped.
-
-    Compares the lowercased query string and Lean name using `fuzz.WRatio`.
-    The raw WRatio (0-100) is normalized to 0-1. Then, a threshold-based
-    mapping is applied: scores below a threshold become 0, and scores above
-    are linearly scaled to the 0-1 range.
-
-    Args:
-        query_string: The user's search query.
-        lean_name: The Lean declaration name.
-
-    Returns:
-        float: A score between 0.0 and 1.0. Returns 0.0 if inputs are empty.
+        A score between 0.0 and 1.0. Returns 0.0 if inputs are empty.
     """
     if not query_string or not lean_name:
         return 0.0
@@ -509,18 +122,11 @@ def calculate_name_match_score(query_string: str, lean_name: str) -> float:
 def log_search_event_to_json(status: str, duration_ms: float, results_count: int, error_type: Optional[str] = None) -> None:
     """Logs a search event as a JSON line to a dedicated performance log file.
 
-    This function constructs a structured log entry containing details about a
-    search event, such as its status, duration, and the number of results.
-    It uses file locking to ensure safe concurrent writes from multiple
-    processes or threads to a JSON Lines formatted file.
-
     Args:
-        status: A string code indicating the outcome of the search
-            (e.g., "SUCCESS", "EMPTY_QUERY_SUBMITTED", "ERROR_EMBEDDING").
+        status: A string code indicating the outcome of the search.
         duration_ms: The total duration of the search processing in milliseconds.
         results_count: The number of search results returned.
-        error_type: Optional. The type of error if the status indicates
-            an error (e.g., "ValueError", "TypeError").
+        error_type: Optional. The type of error if the status indicates an error.
     """
     log_entry = {
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
@@ -532,8 +138,6 @@ def log_search_event_to_json(status: str, duration_ms: float, results_count: int
     if error_type:
         log_entry["error_type"] = error_type
 
-    # Ensure the log directory exists. This check is lightweight.
-    # For high-performance scenarios, ensure directory exists at application startup.
     try:
         os.makedirs(PERFORMANCE_LOG_DIR, exist_ok=True)
     except OSError as e:
@@ -541,11 +145,10 @@ def log_search_event_to_json(status: str, duration_ms: float, results_count: int
             "Performance logging error: Could not create log directory %s: %s. Log entry: %s",
             PERFORMANCE_LOG_DIR, e, log_entry, exc_info=True
         )
-        # Fallback: print to standard error if directory creation fails, so log is not entirely lost.
         print(f"FALLBACK_PERF_LOG (DIR_ERROR): {json.dumps(log_entry)}", file=sys.stderr)
         return
 
-    lock = FileLock(LOCK_PATH, timeout=2)  # Timeout for lock acquisition in seconds.
+    lock = FileLock(LOCK_PATH, timeout=2)
     try:
         with lock:
             with open(PERFORMANCE_LOG_PATH, "a", encoding="utf-8") as f:
@@ -576,7 +179,6 @@ def load_faiss_assets(
 
     Returns:
         A tuple (faiss.Index or None, list_of_IDs or None).
-        Returns (None, None) or partially loaded assets if errors occur.
     """
     index_path = pathlib.Path(index_path_str).resolve()
     map_path = pathlib.Path(map_path_str).resolve()
@@ -599,9 +201,9 @@ def load_faiss_assets(
             faiss_index_obj.ntotal,
             faiss_index_obj.metric_type,
         )
-    except Exception as e: # pylint: disable=broad-except
+    except Exception as e:
         logger.error("Failed to load FAISS index: %s", e, exc_info=True)
-        return None, id_map_list # Return whatever was loaded so far
+        return None, id_map_list
 
     try:
         logger.info("Loading ID map from %s...", map_path)
@@ -613,7 +215,7 @@ def load_faiss_assets(
             )
             return faiss_index_obj, None
         logger.info("Loaded ID map with %d entries.", len(id_map_list))
-    except Exception as e: # pylint: disable=broad-except
+    except Exception as e:
         logger.error("Failed to load or parse ID map file: %s", e, exc_info=True)
         return faiss_index_obj, None
 
@@ -637,7 +239,7 @@ def load_embedding_model(model_name: str) -> Optional[SentenceTransformer]:
         model_name: The name or path of the sentence-transformer model.
 
     Returns:
-        SentenceTransformer: The loaded model, or None if loading fails.
+        The loaded model, or None if loading fails.
     """
     logger.info("Loading sentence transformer model '%s'...", model_name)
     try:
@@ -648,7 +250,7 @@ def load_embedding_model(model_name: str) -> Optional[SentenceTransformer]:
             model.max_seq_length,
         )
         return model
-    except Exception as e: # pylint: disable=broad-except
+    except Exception as e:
         logger.error("Failed to load model '%s': %s", model_name, e, exc_info=True)
         return None
 
@@ -665,29 +267,11 @@ def perform_search(
     text_relevance_weight: float,
     name_match_weight: float,
     selected_packages: Optional[List[str]] = None,
+    # New parameters to replace APP_CONFIG access:
+    semantic_similarity_threshold: float = defaults.DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD,
+    faiss_nprobe: int = defaults.DEFAULT_FAISS_NPROBE
 ) -> List[Tuple[StatementGroup, Dict[str, float]]]:
-    """Performs semantic search, ranking, and logs performance statistics.
-
-    This function orchestrates the search process:
-    1.  Fetches search configurations (e.g., similarity threshold) from `APP_CONFIG`.
-    2.  Records the start time for latency measurement and logs the initiation of a search event.
-    3.  Validates the input query string. If empty, logs status and duration, then returns an empty list.
-    4.  Embeds the query string. If an error occurs, logs status, duration, and error type, then re-raises.
-    5.  Searches the FAISS index. If an error occurs, logs status, duration, and error type, then re-raises.
-    6.  Processes FAISS results to get candidate StatementGroup IDs and their raw similarities.
-        If no candidates are found, logs status and duration, then returns an empty list.
-    7.  Applies a semantic similarity threshold to filter candidates. If no candidates remain,
-        logs status and duration, then returns an empty list.
-    8.  Fetches full `StatementGroup` details from the database for the remaining candidates.
-        If a database error occurs, logs status, duration, and error type, then re-raises.
-    9.  Calculates name match scores for candidates. If no candidates remain after database matching
-        (e.g., all FAISS candidate IDs were stale), logs status and duration, then returns an empty list.
-    10. Normalizes semantic similarity scores across the candidate set.
-    11. Computes a final weighted score for each candidate using semantic similarity, PageRank, and name match.
-    12. Sorts the results by the final score in descending order.
-    13. Logs the final processing status ("SUCCESS" or "NO_RESULTS_FINAL"), total duration, and
-        the count of results returned.
-    14. Returns the ranked list of `StatementGroup` objects and their scores.
+    """Performs semantic search and ranking.
 
     Args:
         session: SQLAlchemy session for database access.
@@ -699,20 +283,17 @@ def perform_search(
         pagerank_weight: Weight for the pre-scaled PageRank score.
         text_relevance_weight: Weight for the normalized semantic similarity score.
         name_match_weight: Weight for the raw name match score.
+        selected_packages: Optional list of package names to filter search by.
+        semantic_similarity_threshold: Minimum similarity for a result to be considered.
+        faiss_nprobe: Number of closest cells/clusters to search for IVF-type FAISS indexes.
 
     Returns:
-        A list of tuples, where each tuple contains a `StatementGroup` object
-        and a dictionary of its scores, sorted by `final_score` in
-        descending order. The score dictionary includes 'final_score',
-        'norm_similarity', 'scaled_pagerank', 'raw_name_match_score',
-        their weighted components, and 'raw_similarity'.
+        A list of tuples, sorted by final_score, containing a
+        `StatementGroup` object and its scores.
 
     Raises:
-        Exception: If critical errors like query embedding, FAISS search, or
-            database operations fail (after attempting to log the event).
+        Exception: If critical errors like query embedding or FAISS search fail.
     """
-    search_config_params = APP_CONFIG.get("search", {})
-    semantic_similarity_threshold = float(search_config_params.get("semantic_similarity_threshold", 0.0))
     overall_start_time = time.time()
 
     logger.info("Search request event initiated.")
@@ -725,7 +306,6 @@ def perform_search(
         log_search_event_to_json(status="EMPTY_QUERY_SUBMITTED", duration_ms=duration_ms, results_count=0)
         return []
 
-    # This block is for query embedding
     try:
         query_embedding = model.encode(
             [query_string.strip()], convert_to_numpy=True
@@ -740,22 +320,17 @@ def perform_search(
         log_search_event_to_json(status="EMBEDDING_ERROR", duration_ms=duration_ms, results_count=0, error_type=type(e).__name__)
         raise Exception(f"Query embedding failed: {e}") from e
 
-    # This block is for the FAISS search
     try:
         logger.debug("Searching FAISS index for top %d text chunk neighbors...", faiss_k)
-
-        # Set nprobe for IVF-type indexes if configured
         if hasattr(faiss_index, "nprobe") and isinstance(faiss_index.nprobe, int):
-            desired_nprobe = int(search_config_params.get("faiss_nprobe", 10))
-            if desired_nprobe > 0: 
-                faiss_index.nprobe = desired_nprobe
+            if faiss_nprobe > 0: 
+                faiss_index.nprobe = faiss_nprobe
                 logger.debug(f"Set FAISS nprobe to: {faiss_index.nprobe}")
             else:
                 logger.warning(
-                    f"Configured faiss_nprobe is {desired_nprobe}. Must be > 0. "
+                    f"Configured faiss_nprobe is {faiss_nprobe}. Must be > 0. "
                     "Using FAISS default or previously set nprobe."
                 )
-            
         distances, indices = faiss_index.search(query_embedding_reshaped, faiss_k)
     except Exception as e:
         logger.error("FAISS search failed: %s", e, exc_info=True)
@@ -802,14 +377,14 @@ def perform_search(
                 logger.warning("Error processing FAISS result for index %d: %s", faiss_internal_idx, e)
 
     if not sg_candidates_raw_similarity:
-        logger.info("No valid StatementGroup candidates found after FAISS search.") # General application log
+        logger.info("No valid StatementGroup candidates found after FAISS search.")
         duration_ms = (time.time() - overall_start_time) * 1000
         log_search_event_to_json(status="NO_FAISS_CANDIDATES", duration_ms=duration_ms, results_count=0)
         return []
     logger.info(
         "Aggregated %d unique StatementGroup candidates from FAISS results.",
         len(sg_candidates_raw_similarity),
-    ) # General application log
+    )
 
     if semantic_similarity_threshold > 0.0 + EPSILON:
         initial_candidate_count = len(sg_candidates_raw_similarity)
@@ -822,13 +397,13 @@ def perform_search(
             "Post-thresholding: %d of %d candidates remaining.",
             len(sg_candidates_raw_similarity),
             initial_candidate_count
-        ) # General application log
+        )
 
         if not sg_candidates_raw_similarity:
             logger.info(
                 "No StatementGroup candidates met the semantic similarity threshold of %.3f.",
                 semantic_similarity_threshold
-            ) # General application log
+            )
             duration_ms = (time.time() - overall_start_time) * 1000
             log_search_event_to_json(status="NO_CANDIDATES_POST_THRESHOLD", duration_ms=duration_ms, results_count=0)
             return []
@@ -839,41 +414,35 @@ def perform_search(
         logger.debug("Fetching StatementGroup details for %d IDs...", len(candidate_sg_ids))
         stmt = select(StatementGroup).where(StatementGroup.id.in_(candidate_sg_ids))
 
-        if selected_packages: # Filter by package if provided
+        if selected_packages:
             logger.info("Filtering search by packages: %s", selected_packages)
             package_filters_sqla = []
             for pkg_name in selected_packages:
-                # Assumes source_file structure like "PackageName/..."
                 package_filters_sqla.append(StatementGroup.source_file.startswith(pkg_name + "/"))
             
-            if package_filters_sqla: # Apply filters if any were generated
+            if package_filters_sqla:
                 stmt = stmt.where(or_(*package_filters_sqla))
 
-        # Continue with options and execution
         stmt = stmt.options(joinedload(StatementGroup.primary_declaration))
         db_results = session.execute(stmt).scalars().unique().all()
         for sg_obj in db_results:
             sg_objects_map[sg_obj.id] = sg_obj
 
         logger.debug("Fetched details for %d StatementGroups from DB.", len(sg_objects_map))
-        # Check if any candidates were lost *after* package filtering but *before* DB fetch
-        # (this check might be less informative now, but harmless)
         if len(sg_objects_map) < len(candidate_sg_ids) and not selected_packages:
-             # Original warning about missing IDs is more relevant if no package filter applied
              missing_ids = set(candidate_sg_ids) - set(sg_objects_map.keys())
              logger.warning(
                  "Could not find SG details in DB for %d IDs (e.g., %s).",
                  len(missing_ids), list(missing_ids)[:5]
              )
         elif len(sg_objects_map) < len(candidate_sg_ids) and selected_packages:
-             # Log difference potentially due to package filtering
              logger.info(
                  "%d potential candidates excluded by package filter or not found in DB.",
                  len(candidate_sg_ids) - len(sg_objects_map)
              )
              
     except SQLAlchemyError as e:
-        logger.error("Database query for StatementGroup details failed: %s", e, exc_info=True) # General application log
+        logger.error("Database query for StatementGroup details failed: %s", e, exc_info=True)
         duration_ms = (time.time() - overall_start_time) * 1000
         log_search_event_to_json(status="DB_FETCH_ERROR", duration_ms=duration_ms, results_count=0, error_type=type(e).__name__)
         raise
@@ -905,7 +474,7 @@ def perform_search(
             candidate_semantic_similarities.append(raw_sem_sim)
 
     if not processed_candidates_data:
-        logger.info("No candidates remaining after matching with DB data or other processing.") # General application log
+        logger.info("No candidates remaining after matching with DB data or other processing.")
         duration_ms = (time.time() - overall_start_time) * 1000
         log_search_event_to_json(status="NO_CANDIDATES_POST_PROCESSING", duration_ms=duration_ms, results_count=0)
         return []
@@ -963,8 +532,8 @@ def print_results(results: List[Tuple[StatementGroup, Dict[str, float]]]) -> Non
     """Formats and prints the search results to the console.
 
     Args:
-        results: A list of tuples, where each tuple contains a StatementGroup
-            object and a dictionary of its scores, sorted by final_score.
+        results: A list of tuples, each containing a StatementGroup
+            object and its scores, sorted by final_score.
     """
     if not results:
         print("\nNo results found.")
@@ -1008,7 +577,7 @@ def print_results(results: List[Tuple[StatementGroup, Dict[str, float]]]) -> Non
         print(f"   Description: {desc_display_short.replace(NEWLINE, ' ')}")
 
         source_loc = sg_obj.source_file or "[No source file]"
-        if source_loc.startswith("Mathlib/"): # Abbreviate Mathlib path
+        if source_loc.startswith("Mathlib/"):
             source_loc = source_loc[len("Mathlib/") :]
         print(f"   File: {source_loc}:{sg_obj.range_start_line}")
 
@@ -1021,7 +590,7 @@ def parse_arguments() -> argparse.Namespace:
     """Parses command-line arguments for the search script.
 
     Returns:
-        argparse.Namespace: An object containing the parsed arguments.
+        An object containing the parsed arguments.
     """
     parser = argparse.ArgumentParser(
         description="Search Lean StatementGroups using combined scoring.",
@@ -1030,17 +599,18 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("query", type=str, help="The search query string.")
     parser.add_argument(
         "--limit",
-        "-n", # Added short option
+        "-n",
         type=int,
-        default=None, # Will be overridden by config if not set by user
-        help="Maximum number of final results to display. Overrides config if set.",
+        default=None, 
+        help="Maximum number of final results to display. "
+             "Overrides default if set.",
     )
     parser.add_argument(
         "--packages",
         metavar="PKG",
         type=str,
-        nargs="*",  # 0 or more arguments
-        default=None, # Default is None if --packages is not used
+        nargs="*",
+        default=None,
         help="Filter search results by specific package names (e.g., Mathlib Std). "
              "If not provided, searches all packages."
     )
@@ -1052,45 +622,25 @@ def main():
     """Main execution function for the search script."""
     args = parse_arguments()
 
-    logger.info("Loading search configuration...")
-    try:
-        search_config = APP_CONFIG.get("search", {})
-        db_url = APP_CONFIG.get("database", {}).get("url")
-        embedding_model_name = search_config.get("embedding_model_name")
-        faiss_idx_path_str = search_config.get("faiss_index_path")
-        faiss_map_path_str = search_config.get("faiss_map_path")
+    logger.info("Using default configurations for paths and parameters.")
+    
+    db_url = defaults.DEFAULT_DB_URL
+    embedding_model_name = defaults.DEFAULT_EMBEDDING_MODEL_NAME
+    resolved_idx_path = defaults.DEFAULT_FAISS_INDEX_PATH
+    resolved_map_path = defaults.DEFAULT_FAISS_MAP_PATH
+    
+    faiss_k_cand = defaults.DEFAULT_FAISS_K
+    pr_weight = defaults.DEFAULT_PAGERANK_WEIGHT
+    sem_sim_weight = defaults.DEFAULT_TEXT_RELEVANCE_WEIGHT
+    name_match_w = defaults.DEFAULT_NAME_MATCH_WEIGHT
+    results_disp_limit = args.limit if args.limit is not None \
+                         else defaults.DEFAULT_RESULTS_LIMIT
+    # semantic_similarity_threshold and faiss_nprobe are passed to perform_search 
+    # which now uses defaults from lean_explore.defaults internally or as default args.
+    # For logging consistency, we can log the default used by perform_search.
+    sem_sim_thresh_for_logging = defaults.DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD
+    faiss_nprobe_for_logging = defaults.DEFAULT_FAISS_NPROBE
 
-        faiss_k_cand = int(search_config.get("faiss_k", 200))
-        pr_weight = float(search_config.get("pagerank_weight", 0.3))
-        sem_sim_weight = float(search_config.get("text_relevance_weight", 1.0))
-        name_match_w = float(search_config.get("name_match_weight", 0.0))
-        results_disp_limit = args.limit if args.limit is not None \
-                             else int(search_config.get("results_limit", 10))
-        # semantic_similarity_threshold is now read directly in perform_search
-        # but we can still read it here for logging purposes if desired.
-        sem_sim_thresh_for_logging = float(search_config.get("semantic_similarity_threshold", 0.0))
-
-
-        if not all([db_url, embedding_model_name, faiss_idx_path_str, faiss_map_path_str]):
-            missing = [
-                name for name, val in [
-                    ("DB URL", db_url), ("Embedding Model Name", embedding_model_name),
-                    ("FAISS Index Path", faiss_idx_path_str), ("FAISS Map Path", faiss_map_path_str)
-                ] if not val
-            ]
-            raise ValueError(f"Missing critical configurations: {', '.join(missing)}")
-
-        faiss_idx_path_cfg = pathlib.Path(faiss_idx_path_str)
-        faiss_map_path_cfg = pathlib.Path(faiss_map_path_str)
-
-        resolved_idx_path = (PROJECT_ROOT / faiss_idx_path_cfg).resolve() \
-            if not faiss_idx_path_cfg.is_absolute() else faiss_idx_path_cfg.resolve()
-        resolved_map_path = (PROJECT_ROOT / faiss_map_path_cfg).resolve() \
-            if not faiss_map_path_cfg.is_absolute() else faiss_map_path_cfg.resolve()
-
-    except Exception as e: # pylint: disable=broad-except
-        logger.error("Failed to load or validate configuration: %s", e, exc_info=True)
-        sys.exit(1)
 
     db_url_display = f"...{db_url[-30:]}" if len(db_url) > 30 else db_url
     logger.info("--- Starting Search ---")
@@ -1101,7 +651,8 @@ def main():
     else:
         logger.info("No package filter specified, searching all packages.")
     logger.info("FAISS k (candidates): %d", faiss_k_cand)
-    logger.info("Semantic Similarity Threshold (from config): %.3f", sem_sim_thresh_for_logging)
+    logger.info("FAISS nprobe (from defaults): %d", faiss_nprobe_for_logging)
+    logger.info("Semantic Similarity Threshold (from defaults): %.3f", sem_sim_thresh_for_logging)
     logger.info(
         "Weights -> NormTextSim: %.2f, ScaledPR: %.2f, RawNameMatch: %.2f",
         sem_sim_weight, pr_weight, name_match_w
@@ -1110,15 +661,25 @@ def main():
     logger.info("Using ID map: %s", resolved_map_path)
     logger.info("Database URL: %s", db_url_display)
 
+    # Ensure data directory exists if a local file-based DB is used by default
+    if defaults.DEFAULT_DB_PATH.is_file() or not defaults.DEFAULT_DB_PATH.parent.exists():
+        try:
+            defaults.LEAN_EXPLORE_USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Ensured user data directory exists: {defaults.LEAN_EXPLORE_USER_DATA_DIR}")
+        except OSError as e:
+            logger.warning(f"Could not create user data directory {defaults.LEAN_EXPLORE_USER_DATA_DIR}: {e}")
+
 
     engine = None
     try:
         s_transformer_model = load_embedding_model(embedding_model_name)
         if s_transformer_model is None:
+            logger.error("Failed to load sentence transformer model. Exiting.")
             sys.exit(1)
 
         faiss_idx, id_map = load_faiss_assets(str(resolved_idx_path), str(resolved_map_path))
         if faiss_idx is None or id_map is None:
+            logger.error("Failed to load FAISS assets. Exiting.")
             sys.exit(1)
 
         engine = create_engine(db_url, echo=False)
@@ -1136,23 +697,26 @@ def main():
                 text_relevance_weight=sem_sim_weight,
                 name_match_weight=name_match_w,
                 selected_packages=args.packages,
+                semantic_similarity_threshold=defaults.DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD,
+                faiss_nprobe=defaults.DEFAULT_FAISS_NPROBE
             )
 
         print_results(ranked_results[:results_disp_limit])
 
     except FileNotFoundError as e:
-        logger.error("Asset file not found: %s. Ensure paths in config.yml are correct.", e)
+        logger.error("Asset file not found: %s. Ensure paths in defaults.py are correct "
+                     "and files have been downloaded by the 'database manager'.", e)
         sys.exit(1)
     except ValueError as e:
         logger.error("Configuration or data error: %s", e, exc_info=True)
         sys.exit(1)
     except OperationalError as e:
-        logger.error("Database connection failed: %s", e)
+        logger.error("Database connection failed for %s: %s", db_url, e)
         sys.exit(1)
     except SQLAlchemyError as e:
         logger.error("Database error during search: %s", e, exc_info=True)
         sys.exit(1)
-    except Exception as e: # pylint: disable=broad-except
+    except Exception as e: 
         logger.critical("An unexpected critical error occurred: %s", e, exc_info=True)
         sys.exit(1)
     finally:

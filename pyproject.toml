@@ -1,19 +1,17 @@
-# pyproject.toml
-
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lean-explore" # Distribution name on PyPI
+name = "lean-explore"
 version = "0.1.0"
 authors = [
-    { name = "Your Name", email = "your.email@example.com" }, # Update with your details
+    { name = "Your Name", email = "your.email@example.com" },
 ]
-description = "A project to explore and rank Lean mathematical declarations." # Your existing description
-readme = "README.md" # Assumes README.md is in the project root
-requires-python = ">=3.8" # Minimum Python version supported
-license = { file = "LICENSE" } # Specify your license file (e.g., LICENSE)
+description = "A project to explore and rank Lean mathematical declarations."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
 keywords = ["lean", "lean4", "search", "formal methods", "theorem prover", "math", "AI"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -31,17 +29,30 @@ classifiers = [
     "Topic :: Text Processing :: Indexing",
 ]
 
-# Runtime dependencies required for the package to function
 dependencies = [
-    "sqlalchemy>=1.4",      # For database models and interaction
-    "requests>=2.25",       # For API client and data downloading
-    "numpy>=1.20",          # For embeddings and FAISS
-    "faiss-cpu>=1.7",       # For local FAISS search; "faiss-gpu" is an alternative
-    "python-dotenv>=0.15",  # Used by src/lean_explore/config.py
-    "PyYAML>=5.4",          # Used by src/lean_explore/config.py
-    "tqdm>=4.60",           # For progress bars, e.g., in data downloaders
-    # Add any other core runtime dependencies for src/lean_explore/
+    # Core data and search
+    "sqlalchemy>=2.0",        # ORM for db.py, local.Service, search.py (SQLAlchemy 2.0 syntax is used in your models.py)
+    "numpy>=1.20",            # For embeddings and FAISS (used by sentence-transformers, faiss)
+    "faiss-cpu>=1.7",         # For local FAISS search in search.py
+    "sentence-transformers>=2.2.0", # For loading embedding models in search.py
+    "rapidfuzz>=3.0.0",       # For name matching in search.py
+    "filelock>=3.0.0",        # For performance logging in search.py
+
+    # API Client
+    "httpx>=0.23.0",          # For asynchronous API client in api.client
+    "pydantic>=2.0",          # For data models in shared.models.api
+
+    # CLI
+    "typer[all]>=0.9.0",      # For CLI application in cli.main (includes rich)
+    "toml>=0.10.0",           # For cli.config_utils to manage API key storage
+
+    # Utilities / Future use
+    "tqdm>=4.60",             # For progress bars (e.g., in future data downloaders)
+    # "requests>=2.25",       # Keep if specifically needed for sync downloads separate from httpx
 ]
 
+[project.scripts]
+leanexplore = "lean_explore.cli.main:app"
+
 [tool.setuptools.packages.find]
-where = ["src"] # Locates the 'lean_explore' package within the 'src' directory
+where = ["src"]

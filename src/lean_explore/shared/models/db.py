@@ -1,4 +1,4 @@
-# File: src/lean_explore/models.py
+# src/lean_explore/shared/models/db.py
 
 """SQLAlchemy ORM models for the lean_explore database.
 
