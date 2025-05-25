@@ -21,6 +21,7 @@ sys.path.insert(0, str(TRUE_PROJECT_ROOT / "src"))
 
 try:
     import faiss
+    from config import APP_CONFIG
     from sentence_transformers import SentenceTransformer
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -31,8 +32,6 @@ try:
         load_faiss_assets,
         perform_search,
     )
-
-    from .config import APP_CONFIG
 except ImportError as e:
     if "tqdm" in str(e).lower():
         print(

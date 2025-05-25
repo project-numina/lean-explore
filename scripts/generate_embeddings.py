@@ -316,7 +316,7 @@ def parse_arguments() -> argparse.Namespace:
         "--input-file",
         "-i",
         type=pathlib.Path,
-        required=True,
+        default=pathlib.Path("data") / "embedding_input.json",
         help="Path to input JSON file with texts (e.g., 'data/embedding_input.json').",
     )
     parser.add_argument(

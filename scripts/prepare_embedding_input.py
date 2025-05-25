@@ -36,9 +36,9 @@ except ImportError as e:
 
 # --- Project Model & Config Imports ---
 try:
-    from lean_explore.shared.models.db import StatementGroup
+    from config import APP_CONFIG
 
-    from .config import APP_CONFIG
+    from lean_explore.shared.models.db import StatementGroup
 except ImportError as e:
     print(
         f"Error: Could not import project modules (StatementGroup, APP_CONFIG): {e}\n"

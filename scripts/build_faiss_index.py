@@ -248,7 +248,7 @@ def parse_arguments() -> argparse.Namespace:
         "--input-npz-file",
         "-i",
         type=pathlib.Path,
-        required=True,
+        default=pathlib.Path("data") / "generated_embeddings.npz",
         help="Path to input NPZ file (e.g., 'data/generated_embeddings.npz') "
         "containing 'ids' and 'embeddings' arrays.",
     )
@@ -257,7 +257,7 @@ def parse_arguments() -> argparse.Namespace:
         type=pathlib.Path,
         default=pathlib.Path()
         / "data"
-        / DEFAULT_OUTPUT_INDEX_FILE,  # Suggest saving to data/
+        / DEFAULT_OUTPUT_INDEX_FILE,
         help="Path to save the serialized FAISS index file.",
     )
     parser.add_argument(
@@ -265,7 +265,7 @@ def parse_arguments() -> argparse.Namespace:
         type=pathlib.Path,
         default=pathlib.Path()
         / "data"
-        / DEFAULT_OUTPUT_MAP_FILE,  # Suggest saving to data/
+        / DEFAULT_OUTPUT_MAP_FILE,
         help="Path to save JSON ID map file.",
     )
     parser.add_argument(

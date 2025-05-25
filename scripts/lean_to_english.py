@@ -59,14 +59,14 @@ try:
     # (e.g., 'pip install -e .') or the 'src/' directory is added to sys.path.
     # 'pip install -e .' is recommended.
     # For 'dev_tools.llm_caller', ensure PROJECT_ROOT is in sys.path.
+    from config import APP_CONFIG, get_gemini_api_key
+
     from dev_tools.llm_caller import GeminiClient, GeminiCostTracker
     from lean_explore.shared.models.db import (
         Declaration,
         StatementGroup,
         StatementGroupDependency,
     )
-
-    from .config import APP_CONFIG, get_gemini_api_key
 except ImportError as e:
     # pylint: disable=broad-exception-raised
     print(
