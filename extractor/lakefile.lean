@@ -18,6 +18,10 @@ require batteries from git
 -- require Duper from git
 --  "https://github.com/leanprover-community/duper.git" @ "v0.0.25"
 
+-- Require FLT (a library for formalizing FLT)
+require FLT from git 
+  "https://github.com/ImperialCollegeLondon/FLT.git" @ "v4.19.0"
+
 -- Require ImportGraph (transitive dep, now made direct to override version)
 require importGraph from git
   "https://github.com/leanprover-community/import-graph" @ "v4.19.0"

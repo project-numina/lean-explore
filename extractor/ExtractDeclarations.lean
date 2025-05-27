@@ -226,6 +226,7 @@ unsafe def main : IO Unit := do
     let imports : Array Import := #[
       { module := `Mathlib },
       { module := `Batteries },
+      { module := `FLT },
       { module := `PhysLean },
       { module := `Std }
     ]
@@ -238,10 +239,10 @@ unsafe def main : IO Unit := do
     IO.println s!"Specified modules imported successfully. Environment created."
 
     let targetRootNames : NameSet := .ofList [
-      `Mathlib, `Batteries, `PhysLean, `Std, `Init, `Lean
+      `Mathlib, `Batteries, `PhysLean, `Std, `Init, `Lean, `FLT
     ]
 
-    let targetRootNamesList : List Name := [`Mathlib, `Batteries, `PhysLean, `Std, `Init, `Lean] -- Keep an ordered list for printing
+    let targetRootNamesList : List Name := [`Mathlib, `Batteries, `PhysLean, `Std, `Init, `Lean, `FLT] -- Keep an ordered list for printing
     let initialCountsByRoot : Std.HashMap Name Nat := Id.run do
       let mut map := Std.HashMap.emptyWithCapacity targetRootNamesList.length
       for rootName in targetRootNamesList do
