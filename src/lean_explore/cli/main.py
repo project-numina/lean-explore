@@ -60,6 +60,7 @@ app.command("chat", help="Interact with an AI agent using Lean Explore tools.")(
 
 
 console = Console()
+error_console = Console(stderr=True)
 
 # Content width for panels.
 PANEL_CONTENT_WIDTH = 80
@@ -75,9 +76,15 @@ def configure_lean_explore_api_key(
         confirmation_prompt=True,
     ),
 ):
-    """Configure and save your Lean Explore API key."""
+    """Configure and save your Lean Explore API key.
+
+    Args:
+        api_key: The API key string to save. Prompts if not provided.
+    """
     if not api_key:
-        console.print("[bold red]Lean Explore API key cannot be empty.[/bold red]")
+        error_console.print(
+            "[bold red]Lean Explore API key cannot be empty.[/bold red]"
+        )
         raise typer.Abort()
 
     if config_utils.save_api_key(api_key):
@@ -87,7 +94,7 @@ def configure_lean_explore_api_key(
             f"{config_path}[/bold green]"
         )
     else:
-        console.print(
+        error_console.print(
             "[bold red]Failed to save Lean Explore API key. "
             "Check logs or permissions.[/bold red]"
         )
@@ -107,9 +114,12 @@ def configure_openai_api_key(
     """Configure and save your OpenAI API key.
 
     This key is used by agent functionalities that leverage OpenAI models.
+
+    Args:
+        api_key: The OpenAI API key string to save. Prompts if not provided.
     """
     if not api_key:
-        console.print("[bold red]OpenAI API key cannot be empty.[/bold red]")
+        error_console.print("[bold red]OpenAI API key cannot be empty.[/bold red]")
         raise typer.Abort()
 
     if config_utils.save_openai_api_key(api_key):
@@ -119,7 +129,7 @@ def configure_openai_api_key(
             f"{config_path}[/bold green]"
         )
     else:
-        console.print(
+        error_console.print(
             "[bold red]Failed to save OpenAI API key. "
             "Check logs or permissions.[/bold red]"
         )
@@ -130,12 +140,12 @@ def _get_api_client() -> Optional[APIClient]:
     """Loads Lean Explore API key and initializes the APIClient.
 
     Returns:
-        APIClient instance if key is found, None otherwise.
+        Optional[APIClient]: APIClient instance if key is found, None otherwise.
     """
     api_key = config_utils.load_api_key()
     if not api_key:
         config_path = config_utils.get_config_file_path()
-        console.print(
+        error_console.print(
             "[bold yellow]Lean Explore API key not configured. Please run:"
             "[/bold yellow]\n"
             f"  `leanexplore configure api-key`\n"
@@ -146,7 +156,15 @@ def _get_api_client() -> Optional[APIClient]:
 
 
 def _format_text_for_fixed_panel(text_content: Optional[str], width: int) -> str:
-    """Wraps text and pads lines to ensure fixed content width for a Panel."""
+    """Wraps text and pads lines to ensure fixed content width for a Panel.
+
+    Args:
+        text_content: The text content to wrap and pad.
+        width: The target width for text wrapping and padding.
+
+    Returns:
+        A string with wrapped and padded text suitable for fixed-width display.
+    """
     if not text_content:
         return " " * width
 
@@ -188,16 +206,23 @@ def _format_text_for_fixed_panel(text_content: Optional[str], width: int) -> str
         if i < len(paragraphs) - 1 and (
             paragraph.strip() or (not paragraph.strip() and not lines_in_paragraph)
         ):
+            # Add a blank padded line between paragraphs
             final_output_lines.append(" " * width)
 
     if not final_output_lines and text_content.strip():
+        # Fallback for content that becomes empty after processing but was not initially
         return " " * width
 
     return "\n".join(final_output_lines)
 
 
 def _display_search_results(response: APISearchResponse, display_limit: int = 5):
-    """Displays search results using fixed-width Panels for each item."""
+    """Displays search results using fixed-width Panels for each item.
+
+    Args:
+        response: The APISearchResponse object from the backend.
+        display_limit: The maximum number of individual results to display in detail.
+    """
     console.print(
         Panel(
             f"[bold cyan]Search Query:[/bold cyan] {response.query}",
@@ -222,7 +247,7 @@ def _display_search_results(response: APISearchResponse, display_limit: int = 5)
         console.print("[yellow]No results found.[/yellow]")
         return
 
-    console.print("")
+    console.print("")  # Adds a blank line for spacing
 
     for i, item in enumerate(response.results):
         if i >= display_limit:
@@ -288,7 +313,7 @@ def _display_search_results(response: APISearchResponse, display_limit: int = 5)
                 "code) available for this item.[/dim]"
             )
 
-        if i < num_results_to_show - 1:
+        if i < num_results_to_show - 1:  # Add spacing between items
             console.print("")
 
     console.rule(style="dim")
@@ -297,9 +322,12 @@ def _display_search_results(response: APISearchResponse, display_limit: int = 5)
             f"...and {len(response.results) - num_results_to_show} more results "
             "received from server but not shown due to limit."
         )
-    elif response.count > len(response.results):
+    elif response.count > len(
+        response.results
+    ):  # Should be total_candidates_considered
         console.print(
-            f"...and {response.count - len(response.results)} more results available "
+            f"...and {response.total_candidates_considered - len(response.results)} "
+            "more results available "
             "on server."
         )
 
@@ -318,7 +346,13 @@ async def search_command(
         5, "--limit", "-n", help="Number of search results to display."
     ),
 ):
-    """Search for Lean statement groups using the Lean Explore API."""
+    """Search for Lean statement groups using the Lean Explore API.
+
+    Args:
+        query_string: The natural language query to search for.
+        package: An optional list of package names to filter results by.
+        limit: The maximum number of search results to display to the user.
+    """
     client = _get_api_client()
     if not client:
         raise typer.Exit(code=1)
@@ -329,33 +363,33 @@ async def search_command(
         _display_search_results(response, display_limit=limit)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
-            console.print(
+            error_console.print(
                 f"[bold red]API Error {e.response.status_code}: Unauthorized. "
                 "Your API key might be invalid or expired.[/bold red]"
             )
-            console.print(
+            error_console.print(
                 "Please reconfigure your API key using: `leanexplore configure api-key`"
             )
         else:
             try:
                 error_detail = e.response.json().get("detail", e.response.text)
-                console.print(
+                error_console.print(
                     f"[bold red]API Error {e.response.status_code}: "
                     f"{error_detail}[/bold red]"
                 )
             except Exception:
-                console.print(
+                error_console.print(
                     f"[bold red]API Error {e.response.status_code}: "
                     f"{e.response.text}[/bold red]"
                 )
         raise typer.Exit(code=1)
     except httpx.RequestError as e:
-        console.print(
+        error_console.print(
             f"[bold red]Network Error: Could not connect to the API. {e}[/bold red]"
         )
         raise typer.Exit(code=1)
     except Exception as e:
-        console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+        error_console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
         raise typer.Exit(code=1)
 
 
@@ -366,7 +400,11 @@ async def get_by_id_command(
         ..., help="The ID of the statement group to retrieve."
     ),
 ):
-    """Get detailed information about a specific statement group by its ID."""
+    """Get detailed information about a specific statement group by its ID.
+
+    Args:
+        group_id: The unique integer identifier of the statement group.
+    """
     client = _get_api_client()
     if not client:
         raise typer.Exit(code=1)
@@ -437,36 +475,36 @@ async def get_by_id_command(
                 )
 
         else:
-            console.print(
+            error_console.print(  # Changed to error_console for error/warning message
                 f"[yellow]Statement group with ID {group_id} not found.[/yellow]"
             )
 
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
-            console.print(
+            error_console.print(
                 f"[bold red]API Error {e.response.status_code}: Unauthorized."
                 " Your API key might be invalid or expired.[/bold red]"
             )
         else:
             try:
                 error_detail = e.response.json().get("detail", e.response.text)
-                console.print(
+                error_console.print(
                     f"[bold red]API Error {e.response.status_code}: "
                     f"{error_detail}[/bold red]"
                 )
             except Exception:
-                console.print(
+                error_console.print(
                     f"[bold red]API Error {e.response.status_code}: "
                     f"{e.response.text}[/bold red]"
                 )
         raise typer.Exit(code=1)
     except httpx.RequestError as e:
-        console.print(
+        error_console.print(
             f"[bold red]Network Error: Could not connect to the API. {e}[/bold red]"
         )
         raise typer.Exit(code=1)
     except Exception as e:
-        console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+        error_console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
         raise typer.Exit(code=1)
 
 
@@ -477,7 +515,11 @@ async def get_dependencies_command(
         ..., help="The ID of the statement group to get dependencies for."
     ),
 ):
-    """Get dependencies (citations) for a specific statement group by its ID."""
+    """Get dependencies (citations) for a specific statement group by its ID.
+
+    Args:
+        group_id: The unique integer identifier of the statement group.
+    """
     client = _get_api_client()
     if not client:
         raise typer.Exit(code=1)
@@ -519,42 +561,38 @@ async def get_dependencies_command(
             else:
                 console.print("[yellow]No citations found for this group.[/yellow]")
         else:
-            console.print(
+            error_console.print(  # Changed to error_console for error/warning message
                 f"[yellow]Statement group with ID {group_id} not found or no "
                 "citations data available.[/yellow]"
             )
 
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
-            console.print(
+            error_console.print(
                 f"[bold red]API Error {e.response.status_code}: Unauthorized."
                 " Your API key might be invalid or expired.[/bold red]"
             )
         else:
             try:
                 error_detail = e.response.json().get("detail", e.response.text)
-                console.print(
+                error_console.print(
                     f"[bold red]API Error {e.response.status_code}: "
                     f"{error_detail}[/bold red]"
                 )
             except Exception:
-                console.print(
+                error_console.print(
                     f"[bold red]API Error {e.response.status_code}: "
                     f"{e.response.text}[/bold red]"
                 )
         raise typer.Exit(code=1)
     except httpx.RequestError as e:
-        console.print(
+        error_console.print(
             f"[bold red]Network Error: Could not connect to the API. {e}[/bold red]"
         )
         raise typer.Exit(code=1)
     except Exception as e:
-        console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+        error_console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
         raise typer.Exit(code=1)
-
-
-# The placeholder download-db command is removed as its functionality
-# will be covered by the `leanexplore data fetch` command.
 
 
 @mcp_app.command("serve")
@@ -579,6 +617,10 @@ def mcp_serve_command(
     The server communicates via stdio and provides Lean search functionalities
     as MCP tools. The actual checks for local data presence or API key validity
     are handled by the 'lean_explore.mcp.server' module when it starts.
+
+    Args:
+        backend: The backend choice ('api' or 'local').
+        api_key_override: Optional API key to override any stored key.
     """
     command_parts = [
         sys.executable,
@@ -589,41 +631,33 @@ def mcp_serve_command(
     ]
 
     if backend.lower() == "api":
-        # API key will be loaded by mcp.server or passed if overridden
-        # We still check here to provide immediate feedback if --api-key
-        # is needed but not stored.
         effective_lean_explore_api_key = api_key_override or config_utils.load_api_key()
         if not effective_lean_explore_api_key:
-            console.print(
+            error_console.print(
                 "[bold red]Lean Explore API key is required for 'api' backend."
                 "[/bold red]\n"
                 "Please configure it using `leanexplore configure api-key` "
                 "or provide it with the `--api-key` option for this command."
             )
             raise typer.Abort()
-        # Pass the override if provided; otherwise, mcp.server will load it.
         if api_key_override:
             command_parts.extend(["--api-key", api_key_override])
     elif backend.lower() == "local":
-        # The mcp.server module will now handle checks for local data existence
-        # and provide user guidance. No explicit checks needed here in main.py.
-        console.print(
+        error_console.print(  # Changed to error_console for consistency
             "[dim]Attempting to start MCP server with 'local' backend. "
             "The server will verify local data availability.[/dim]"
         )
     else:
-        # This case should ideally not be reached due to Typer's choice validation,
-        # but as a safeguard.
-        console.print(
+        error_console.print(
             f"[bold red]Invalid backend: '{backend}'. Must be 'api' or 'local'."
             "[/bold red]"
         )
         raise typer.Abort()
 
-    console.print(
+    error_console.print(
         f"[green]Launching MCP server subprocess with '{backend}' backend...[/green]"
     )
-    console.print(
+    error_console.print(
         "[dim]The server will now take over stdio. To stop it, the connected MCP "
         "client should disconnect, or you may need to manually terminate this process "
         "(e.g., Ctrl+C if no client is managing it).[/dim]"
@@ -632,24 +666,22 @@ def mcp_serve_command(
     try:
         process_result = subprocess.run(command_parts, check=False)
         if process_result.returncode != 0:
-            # mcp.server should have printed its own detailed error message
-            # before exiting with a non-zero code.
-            console.print(
+            error_console.print(
                 f"[bold red]MCP server subprocess exited with code: "
                 f"{process_result.returncode}. Check server logs above for "
                 f"details.[/bold red]"
             )
     except FileNotFoundError:
-        console.print(
+        error_console.print(
             f"[bold red]Error: Could not find Python interpreter '{sys.executable}' "
             f"or the MCP server module 'lean_explore.mcp.server'.[/bold red]"
         )
-        console.print(
+        error_console.print(
             "Please ensure the package is installed correctly and "
             "`python -m lean_explore.mcp.server` is runnable."
         )
     except Exception as e:
-        console.print(
+        error_console.print(
             f"[bold red]An error occurred while trying to launch or run the MCP "
             f"server: {e}[/bold red]"
         )

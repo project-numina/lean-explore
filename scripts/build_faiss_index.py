@@ -255,17 +255,13 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--output-index-file",
         type=pathlib.Path,
-        default=pathlib.Path()
-        / "data"
-        / DEFAULT_OUTPUT_INDEX_FILE,
+        default=pathlib.Path() / "data" / DEFAULT_OUTPUT_INDEX_FILE,
         help="Path to save the serialized FAISS index file.",
     )
     parser.add_argument(
         "--output-map-file",
         type=pathlib.Path,
-        default=pathlib.Path()
-        / "data"
-        / DEFAULT_OUTPUT_MAP_FILE,
+        default=pathlib.Path() / "data" / DEFAULT_OUTPUT_MAP_FILE,
         help="Path to save JSON ID map file.",
     )
     parser.add_argument(

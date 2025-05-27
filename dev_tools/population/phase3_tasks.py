@@ -177,8 +177,9 @@ def _choose_primary_declaration(
 
     Applies heuristics to select the primary declaration from a list of
     declarations originating from the same statement block. Prioritizes
-    non-internal declarations, then specific declaration types (e.g.,
-    'definition' over 'theorem'), and finally uses Lean name for tie-breaking.
+    non-internal declarations, then by shortest Lean name, then specific
+    declaration types (e.g., 'definition' over 'theorem'), and finally
+    uses the full Lean name alphabetically for tie-breaking.
 
     Args:
         declarations_in_block: A list of `Declaration` objects from the same
@@ -196,7 +197,7 @@ def _choose_primary_declaration(
     if not candidates:  # If all are internal, consider all of them
         candidates = declarations_in_block
 
-    # Prioritize by declaration type, then by Lean name for tie-breaking
+    # Define priority for declaration types
     preferred_types_order = [
         "definition",
         "def",
@@ -217,20 +218,26 @@ def _choose_primary_declaration(
     ]
     type_priority_map = {dtype: i for i, dtype in enumerate(preferred_types_order)}
 
-    # Sort candidates: lower priority number first (more preferred type), then by name
+    # Sort candidates:
+    # 1. By length of lean_name (shorter first).
+    # 2. By declaration type priority (lower priority number is more preferred).
+    # 3. By lean_name alphabetically as a final tie-breaker.
     candidates.sort(
         key=lambda d: (
+            len(d.lean_name) if d.lean_name else float("inf"),
             type_priority_map.get(d.decl_type, len(preferred_types_order) + 1),
-            d.lean_name,  # Alphabetical by name as a tie-breaker
+            d.lean_name if d.lean_name else "",
         )
     )
 
     if candidates:
         primary_decl = candidates[0]
         logger.debug(
-            "  Chosen primary: '%s' (Type: %s, Internal: %s) from %d declarations"
+            "  Chosen primary: '%s' (Length: %s, Type: %s, Internal: %s) from "
+            "%d declarations"
             " in block.",
             primary_decl.lean_name,
+            len(primary_decl.lean_name) if primary_decl.lean_name else "N/A",
             primary_decl.decl_type,
             primary_decl.is_internal,
             len(declarations_in_block),
