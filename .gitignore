@@ -214,3 +214,4 @@ data/
 extractor/.lake/
 **/.DS_Store
 .wrangler/
+collected_search_results.json
