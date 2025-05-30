@@ -86,7 +86,6 @@ class TestServiceInitialization:
             service.default_text_relevance_weight
             == defaults.DEFAULT_TEXT_RELEVANCE_WEIGHT
         )
-        assert service.default_name_match_weight == defaults.DEFAULT_NAME_MATCH_WEIGHT
         assert (
             service.default_semantic_similarity_threshold
             == defaults.DEFAULT_SEM_SIM_THRESHOLD
@@ -647,7 +646,7 @@ class TestServiceMethods:
         assert response.processing_time_ms >= 0
 
         mock_perform_search.assert_called_once_with(
-            session=mock_session,  # Ensure it received the session
+            session=mock_session,
             query_string=query_str,
             model=initialized_service.embedding_model,
             faiss_index=initialized_service.faiss_index,
@@ -655,11 +654,12 @@ class TestServiceMethods:
             faiss_k=initialized_service.default_faiss_k,
             pagerank_weight=initialized_service.default_pagerank_weight,
             text_relevance_weight=initialized_service.default_text_relevance_weight,
-            name_match_weight=initialized_service.default_name_match_weight,
+            log_searches=True,
             selected_packages=pkgs,
             semantic_similarity_threshold=initialized_service.default_semantic_similarity_threshold,
             faiss_nprobe=initialized_service.default_faiss_nprobe,
         )
+
 
     def test_search_perform_search_raises_exception(
         self, initialized_service: Service, mocker: "MockerFixture"
