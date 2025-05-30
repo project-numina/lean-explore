@@ -59,7 +59,7 @@ except ImportError as e:
 
 # --- Logging Setup ---
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )

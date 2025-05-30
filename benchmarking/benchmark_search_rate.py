@@ -1,4 +1,4 @@
-# File: scripts/benchmark_search.py
+# File: benchmarking/benchmark_search.py
 
 """Benchmarks the search functionality of the lean_explore package.
 

@@ -52,7 +52,6 @@ class Service:
         default_faiss_k (int): Default number of FAISS neighbors to retrieve.
         default_pagerank_weight (float): Default weight for PageRank.
         default_text_relevance_weight (float): Default weight for text relevance.
-        default_name_match_weight (float): Default weight for name matching.
         default_semantic_similarity_threshold (float): Default similarity threshold.
         default_results_limit (int): Default limit for search results.
         default_faiss_nprobe (int): Default nprobe for FAISS IVF indexes.
@@ -147,7 +146,7 @@ class Service:
             guidance = (
                 "Please check your database configuration or connection parameters."
             )
-            if is_file_db:  # This check is now valid as is_file_db is defined earlier
+            if is_file_db:
                 guidance = (
                     f"The database file at '{db_path}' might be corrupted, "
                     "inaccessible, or not a valid SQLite file. "
@@ -174,7 +173,6 @@ class Service:
         self.default_text_relevance_weight: float = (
             defaults.DEFAULT_TEXT_RELEVANCE_WEIGHT
         )
-        self.default_name_match_weight: float = defaults.DEFAULT_NAME_MATCH_WEIGHT
         self.default_semantic_similarity_threshold: float = (
             defaults.DEFAULT_SEM_SIM_THRESHOLD
         )
@@ -256,7 +254,7 @@ class Service:
                     faiss_k=self.default_faiss_k,
                     pagerank_weight=self.default_pagerank_weight,
                     text_relevance_weight=self.default_text_relevance_weight,
-                    name_match_weight=self.default_name_match_weight,
+                    log_searches=True,
                     selected_packages=package_filters,
                     semantic_similarity_threshold=(
                         self.default_semantic_similarity_threshold
@@ -314,10 +312,8 @@ class Service:
                     f"Database error in get_by_id for group_id {group_id}: {e}",
                     exc_info=True,
                 )
-                # For a service method, returning None on DB error might be acceptable,
-                # or raise a custom service-level exception.
                 return None
-            except Exception as e:  # Catch any other unexpected errors
+            except Exception as e:
                 logger.error(
                     f"Unexpected error in get_by_id for group_id {group_id}: {e}",
                     exc_info=True,
@@ -352,7 +348,7 @@ class Service:
                         f"Source statement group ID {group_id} not found for "
                         "dependency lookup."
                     )
-                    return None  # Source group does not exist
+                    return None
 
                 # Query for statement groups that `group_id` depends on (citations)
                 cited_target_groups_orm = (
@@ -385,7 +381,7 @@ class Service:
                     exc_info=True,
                 )
                 return None
-            except Exception as e:  # Catch any other unexpected errors
+            except Exception as e:
                 logger.error(
                     f"Unexpected error in get_dependencies for "
                     f"group_id {group_id}: {e}",
