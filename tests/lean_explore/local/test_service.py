@@ -660,7 +660,6 @@ class TestServiceMethods:
             faiss_nprobe=initialized_service.default_faiss_nprobe,
         )
 
-
     def test_search_perform_search_raises_exception(
         self, initialized_service: Service, mocker: "MockerFixture"
     ):

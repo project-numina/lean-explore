@@ -5,7 +5,7 @@ database:
 llm:
   # --- Model Configuration ---
   # Google Gemini model for text generation.
-  generation_model: "gemini-2.0-flash"
+  generation_model: "gemini-2.0-flash" # Was gemini-1.0-pro, assuming update, kept what was in original user content
   # Google Gemini model for API-based text embeddings.
   # Note: Search uses a local sentence-transformer model specified in 'search' section.
   embedding_model: "models/text-embedding-004"
@@ -34,6 +34,16 @@ lean_to_english:
   max_gather_batch_size: 10000
   # Filename of the prompt template (in project root or src).
   prompt_template_filename: "src/prompt_template.txt"
+
+get_summaries:
+  # Default database URL for the get_summaries script.
+  database_url: "sqlite:///data/lean_explore_data.db"
+  # Path to the prompt template file for summary generation.
+  prompt_template_path: "scripts/summary_prompt_template.txt"
+  # Max concurrent LLM API calls for generating summaries.
+  max_concurrent_llm_calls: 20
+  # Max number of entries to gather for LLM processing at once.
+  max_gather_batch_size: 100
 
 search:
   # --- Semantic Search ---

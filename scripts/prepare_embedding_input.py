@@ -4,12 +4,12 @@
 
 Connects to a database, queries StatementGroups, and for each group,
 conditionally generates entries for its Lean code representation,
-informal English description, docstring, and the Lean name of its
+informal English description, informal summary, and the Lean name of its
 primary declaration. Entries are only created if the respective text
 content is non-empty and not excluded by command-line flags.
 
 The output JSON file contains objects with 'id', 'source_statement_group_id',
-'text_type' ('lean', 'informal_description', 'docstring', or 'lean_name'),
+'text_type' ('lean', 'informal_description', 'informal_summary', or 'lean_name'),
 and 'text' fields. This file serves as input for subsequent embedding generation.
 """
 
@@ -42,7 +42,7 @@ project_root = os.path.dirname(benchmarking_dir)
 
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-    
+
 try:
     from config import APP_CONFIG
 
@@ -106,13 +106,13 @@ def prepare_data(
     limit: Optional[int] = None,
     exclude_lean: bool = False,
     exclude_english: bool = False,
-    exclude_docstrings: bool = False,
+    exclude_informal_summaries: bool = False,
     exclude_lean_names: bool = False,
 ) -> None:
     """Fetches StatementGroups and prepares a JSON file for embedding.
 
     For each StatementGroup, this function conditionally creates entries for
-    Lean code, informal descriptions, docstrings, and Lean names of primary
+    Lean code, informal descriptions, informal summaries, and Lean names of primary
     declarations, based on content availability and exclusion flags.
 
     Args:
@@ -121,7 +121,7 @@ def prepare_data(
         limit: Optional maximum number of StatementGroups to process.
         exclude_lean: If True, Lean code text will not be included.
         exclude_english: If True, informal English descriptions will not be included.
-        exclude_docstrings: If True, docstrings will not be included.
+        exclude_informal_summaries: If True, informal summaries will not be included.
         exclude_lean_names: If True, Lean names of primary declarations
             will not be included.
 
@@ -138,8 +138,8 @@ def prepare_data(
         logger.info("Excluding Lean code text.")
     if exclude_english:
         logger.info("Excluding informal English descriptions.")
-    if exclude_docstrings:
-        logger.info("Excluding docstrings.")
+    if exclude_informal_summaries:
+        logger.info("Excluding informal summaries.")
     if exclude_lean_names:
         logger.info("Excluding Lean names of primary declarations.")
 
@@ -225,29 +225,29 @@ def prepare_data(
                         sg_id,
                     )
 
-                # 3. Handle Docstring Text
-                if not exclude_docstrings:
-                    docstring_text_content = ""
-                    if sg_obj.docstring:
-                        docstring_text_content = sg_obj.docstring.strip()
+                # 3. Handle Informal Summary Text
+                if not exclude_informal_summaries:
+                    informal_summary_content = ""
+                    if sg_obj.informal_summary:
+                        informal_summary_content = sg_obj.informal_summary.strip()
 
-                    if docstring_text_content:
+                    if informal_summary_content:
                         output_records.append(
                             {
-                                "id": f"sg_{sg_id}_docstring",
+                                "id": f"sg_{sg_id}_informal_summary",
                                 "source_statement_group_id": sg_id,
-                                "text_type": "docstring",
-                                "text": docstring_text_content,
+                                "text_type": "informal_summary",
+                                "text": informal_summary_content,
                             }
                         )
                     else:
                         logger.debug(
-                            "SG ID %d: No non-empty docstring found. Skipping entry.",
+                            "SG ID %d: No non-empty informal summary found. Skipping entry.",
                             sg_id,
                         )
-                elif exclude_docstrings:
+                elif exclude_informal_summaries:
                     logger.debug(
-                        "SG ID %d: Docstring excluded by flag. Skipping entry.",
+                        "SG ID %d: Informal summary excluded by flag. Skipping entry.",
                         sg_id,
                     )
 
@@ -324,7 +324,7 @@ def parse_arguments() -> argparse.Namespace:
         description=(
             "Prepare JSON input for embedding generation from StatementGroups, "
             "allowing selective inclusion of Lean code, informal descriptions, "
-            "docstrings, and Lean names."
+            "informal summaries, and Lean names."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -362,9 +362,9 @@ def parse_arguments() -> argparse.Namespace:
         help="Exclude informal English descriptions from the output.",
     )
     parser.add_argument(
-        "--exclude-docstrings",
+        "--exclude-informal-summaries",
         action="store_true",
-        help="Exclude docstrings from the output.",
+        help="Exclude informal summaries from the output.",
     )
     parser.add_argument(
         "--exclude-lean-names",
@@ -392,7 +392,8 @@ if __name__ == "__main__":
         limit=cli_args.limit,
         exclude_lean=cli_args.exclude_lean,
         exclude_english=cli_args.exclude_english,
-        exclude_docstrings=cli_args.exclude_docstrings,
+        exclude_informal_summaries=cli_args.exclude_informal_summaries,
         exclude_lean_names=cli_args.exclude_lean_names,
     )
     logger.info("--- Embedding input preparation finished ---")
+    

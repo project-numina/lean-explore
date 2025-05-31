@@ -95,6 +95,7 @@ class StatementGroup(Base):
     display_statement_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     docstring: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     informal_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    informal_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     source_file: Mapped[str] = mapped_column(Text, nullable=False)
     range_start_line: Mapped[int] = mapped_column(Integer, nullable=False)

@@ -25,9 +25,7 @@ try:
         format_search_results_for_prompt,
     )
 except ImportError as e:
-    print(
-        "Error: Could not import necessary components from 'evaluate_results.py'."
-    )
+    print("Error: Could not import necessary components from 'evaluate_results.py'.")
     print(f"Details: {e}")
     print(
         "Please ensure 'evaluate_results.py' is in the same directory "
@@ -35,6 +33,7 @@ except ImportError as e:
         "constants are correctly defined."
     )
     import sys
+
     sys.exit(1)
 
 
@@ -45,9 +44,7 @@ def display_prompts_for_query(query_index: int, permutation_index: int) -> None:
         query_index: The index of the query in the search_results.json file.
         permutation_index: The index of the search engine permutation to use (0-5).
     """
-    search_results_path = os.path.join(
-        os.path.dirname(__file__), SEARCH_RESULTS_FILE
-    )
+    search_results_path = os.path.join(os.path.dirname(__file__), SEARCH_RESULTS_FILE)
 
     if not os.path.exists(search_results_path):
         print(f"Error: Search results file not found at '{search_results_path}'.")
@@ -61,9 +58,7 @@ def display_prompts_for_query(query_index: int, permutation_index: int) -> None:
         with open(search_results_path, encoding="utf-8") as f:
             all_search_data = json.load(f)
         if not isinstance(all_search_data, list):
-            print(
-                f"Error: '{search_results_path}' does not contain a JSON list."
-            )
+            print(f"Error: '{search_results_path}' does not contain a JSON list.")
             return
         if not all_search_data:
             print(f"No search data found in '{search_results_path}'.")
@@ -79,7 +74,7 @@ def display_prompts_for_query(query_index: int, permutation_index: int) -> None:
         print(
             f"Error: query_index {query_index} is out of bounds. "
             f"File contains {len(all_search_data)} queries "
-            f"(indices 0 to {len(all_search_data)-1})."
+            f"(indices 0 to {len(all_search_data) - 1})."
         )
         return
 
@@ -96,7 +91,7 @@ def display_prompts_for_query(query_index: int, permutation_index: int) -> None:
 
     print("--- Scenario Details ---")
     print(f"Query Index: {query_index}")
-    print(f"Query String: \"{query_string}\"")
+    print(f'Query String: "{query_string}"')
     print(f"Permutation Index: {permutation_index}")
     print(f"Engine Order (Keys): {chosen_engine_permutation}")
     print("-" * 20)
@@ -150,7 +145,7 @@ if __name__ == "__main__":
         type=int,
         default=0,
         choices=range(len(list(permutations(SEARCH_ENGINE_KEYS)))),
-        metavar=f"[0-{len(list(permutations(SEARCH_ENGINE_KEYS)))-1}]",
+        metavar=f"[0-{len(list(permutations(SEARCH_ENGINE_KEYS))) - 1}]",
         help=(
             "Index of the search engine permutation to use (default: 0). "
             f"There are {len(list(permutations(SEARCH_ENGINE_KEYS)))} permutations "

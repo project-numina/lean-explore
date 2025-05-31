@@ -4,16 +4,17 @@
 
 This script iterates through all StatementGroup entries and, for each group,
 evaluates if its primary_decl_id should be changed. The new primary
-declaration is chosen from the group's members if its lean_name is shorter
-than the current primary's lean_name and is also a prefix of the current
-primary's lean_name. If multiple such candidates exist, the one with the
-shortest lean_name is selected. The StatementGroup's docstring is also
+declaration is chosen based on a multi-phase logic involving prefix
+relationships and hierarchical presence of declaration names in the
+statement group's text. The StatementGroup's docstring is also
 updated to match the new primary declaration's docstring.
 """
 
 import logging
+import re
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import joinedload, scoped_session, sessionmaker
@@ -24,7 +25,11 @@ SRC_PATH = PROJECT_ROOT / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
-from lean_explore.shared.models.db import Base, StatementGroup  # noqa: E402
+from lean_explore.shared.models.db import (  # noqa: E402
+    Base,
+    Declaration,
+    StatementGroup,
+)
 
 # --- Configuration ---
 DATABASE_FILE = PROJECT_ROOT / "data" / "lean_explore_data.db"
@@ -41,12 +46,85 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _is_word_in_text(word: str, text: str) -> bool:
+    """Checks if a word is in text as a whole word.
+
+    Args:
+        word (str): The word to search for.
+        text (str): The text to search within.
+
+    Returns:
+        bool: True if the word is found as a whole word, False otherwise.
+    """
+    if not word or not text:
+        return False
+    escaped_word = re.escape(word)
+    pattern = r"\b" + escaped_word + r"\b"
+    return bool(re.search(pattern, text))
+
+
+def _get_declarations_found_in_code_hierarchically(
+    declarations: List[Declaration], statement_text: str
+) -> List[Declaration]:
+    """Performs a hierarchical search for declaration names in statement text.
+
+    It iterates through suffix levels of declaration names (from full FQN
+    down to the last component). If matches are found at a certain level,
+    only those declarations are returned, and deeper levels are not checked.
+
+    Args:
+        declarations (List[Declaration]): The list of declarations to check.
+        statement_text (str): The text of the statement group.
+
+    Returns:
+        List[Declaration]: A list of declarations found at the earliest
+                           (longest name part) suffix level. Empty if none found.
+    """
+    s_found_in_code: List[Declaration] = []
+    if not declarations or not statement_text:
+        return s_found_in_code
+
+    max_levels = 0
+    for decl in declarations:
+        if decl.lean_name:
+            max_levels = max(max_levels, len(decl.lean_name.split(".")))
+
+    if max_levels == 0:
+        return s_found_in_code
+
+    for level in range(max_levels):  # level 0 to max_levels-1
+        current_level_matches: List[Declaration] = []
+        for decl in declarations:
+            if not decl.lean_name:
+                continue
+
+            name_parts = decl.lean_name.split(".")
+            if level >= len(name_parts):  # Cannot strip this many components
+                name_part_to_check = None
+            else:
+                # Suffix at level 'l' means stripping 'l' leading components
+                name_part_to_check = ".".join(name_parts[level:])
+
+            if name_part_to_check and _is_word_in_text(
+                name_part_to_check, statement_text
+            ):
+                current_level_matches.append(decl)
+
+        if current_level_matches:
+            s_found_in_code = current_level_matches
+            break  # Terminate: matches found at this level
+
+    return s_found_in_code
+
+
 def update_primary_declarations_in_db(db_url: str):
     """Updates the primary_decl_id for StatementGroups.
 
-    Iterates through StatementGroups, applying logic to select a new
-    primary declaration based on name length and prefix relationship
-    to the current primary. Updates are committed in batches.
+    Iterates through StatementGroups, applying a multi-phase logic to select
+    a new primary declaration. This involves an initial selection based on
+    prefix relationships to the current primary, followed by a refinement
+    based on hierarchical presence of declaration names in the statement
+    group's source text. Updates are committed in batches.
 
     Args:
         db_url (str): The database connection URL.
@@ -99,40 +177,129 @@ def update_primary_declarations_in_db(db_url: str):
             candidate_pool = (
                 non_internal_members if non_internal_members else member_declarations
             )
+            if not candidate_pool:  # Ensure pool is not empty for logic below
+                logger.warning(
+                    f"StatementGroup ID {sg.id} has an empty candidate pool. Skipping."
+                )
+                continue
 
-            best_new_candidate = None
-
-            for decl in candidate_pool:
-                if decl.id == current_primary_decl.id:
+            # Phase 1: Initial Candidate Selection (Prefix Logic)
+            # Find the shortest declaration that is a prefix of current_primary_decl.
+            # If none, prefix_contender_decl remains current_primary_decl.
+            initial_shorter_prefix_candidate = None
+            for decl_ph1 in candidate_pool:
+                if decl_ph1.id == current_primary_decl.id:
                     continue
 
                 if (
-                    decl.lean_name
+                    decl_ph1.lean_name
                     and current_primary_decl.lean_name
-                    and len(decl.lean_name) < len(current_primary_decl.lean_name)
-                    and current_primary_decl.lean_name.startswith(decl.lean_name)
+                    and len(decl_ph1.lean_name) < len(current_primary_decl.lean_name)
+                    and current_primary_decl.lean_name.startswith(decl_ph1.lean_name)
                 ):
-                    if best_new_candidate is None or len(decl.lean_name) < len(
-                        best_new_candidate.lean_name
-                    ):
-                        best_new_candidate = decl
+                    if initial_shorter_prefix_candidate is None or len(
+                        decl_ph1.lean_name
+                    ) < len(initial_shorter_prefix_candidate.lean_name):
+                        initial_shorter_prefix_candidate = decl_ph1
 
-            if best_new_candidate:
-                if sg.primary_decl_id != best_new_candidate.id:
-                    old_primary_name = current_primary_decl.lean_name
-                    new_primary_name = best_new_candidate.lean_name
-                    logger.info(
-                        f"Updating StatementGroup ID {sg.id}: "
-                        f"Old primary: '{old_primary_name}' "
-                        f"(ID: {sg.primary_decl_id}), "
-                        f"New primary: '{new_primary_name}' "
-                        f"(ID: {best_new_candidate.id})"
+            prefix_contender_decl: Declaration
+            if initial_shorter_prefix_candidate:
+                prefix_contender_decl = initial_shorter_prefix_candidate
+            else:
+                prefix_contender_decl = current_primary_decl
+
+            # Phase 2: Code Presence Evaluation & Final Selection
+            s_found_in_code = _get_declarations_found_in_code_hierarchically(
+                candidate_pool, sg.statement_text
+            )
+
+            final_primary_decl: Optional[Declaration] = None
+
+            if not s_found_in_code:
+                # Case B: No declarations found in code
+                final_primary_decl = prefix_contender_decl
+            else:
+                # Case A: Some declarations found in code
+                if len(s_found_in_code) == 1:
+                    final_primary_decl = s_found_in_code[0]
+                else:
+                    # Apply selection criteria to S_found_in_code
+                    # 1. Prefer by prefix relationship
+                    eligible_candidates = s_found_in_code
+
+                    prefix_based_candidates: List[Declaration] = []
+                    is_any_candidate_a_prefix = False
+                    for d1 in s_found_in_code:
+                        is_d1_prefix_of_other = False
+                        for d2 in s_found_in_code:
+                            if d1.id == d2.id or not d1.lean_name or not d2.lean_name:
+                                continue
+                            if len(d1.lean_name) < len(
+                                d2.lean_name
+                            ) and d2.lean_name.startswith(d1.lean_name):
+                                is_d1_prefix_of_other = True
+                                is_any_candidate_a_prefix = True
+                                break
+                        if is_d1_prefix_of_other:
+                            prefix_based_candidates.append(d1)
+
+                    if is_any_candidate_a_prefix:
+                        eligible_candidates = prefix_based_candidates
+                    # If no candidate is a prefix of another,
+                    # eligible_candidates remains S_found_in_code.
+
+                    # 2. Sort by lean_name length, then by ID for stability
+                    eligible_candidates.sort(
+                        key=lambda d: (
+                            len(d.lean_name) if d.lean_name else float("inf"),
+                            d.id,
+                        )
                     )
-                    sg.primary_decl_id = best_new_candidate.id
-                    sg.docstring = best_new_candidate.docstring
-                    session.add(sg)
-                    updated_groups_count += 1
-                    pending_updates_in_batch += 1
+
+                    best_after_sort = eligible_candidates[0]
+
+                    # 3. If tied (same shortest length), prefer prefix_contender_decl
+                    # if among them
+                    shortest_len = (
+                        len(best_after_sort.lean_name)
+                        if best_after_sort.lean_name
+                        else float("inf")
+                    )
+
+                    tied_shortest_candidates = [
+                        decl
+                        for decl in eligible_candidates
+                        if (len(decl.lean_name) if decl.lean_name else float("inf"))
+                        == shortest_len
+                    ]
+
+                    is_prefix_contender_chosen = False
+                    if len(tied_shortest_candidates) > 1:
+                        for tied_decl in tied_shortest_candidates:
+                            if tied_decl.id == prefix_contender_decl.id:
+                                final_primary_decl = tied_decl
+                                is_prefix_contender_chosen = True
+                                break
+
+                    if not is_prefix_contender_chosen:
+                        final_primary_decl = best_after_sort  # First from sorted list
+
+            # Update StatementGroup if the chosen primary is different
+            if final_primary_decl and sg.primary_decl_id != final_primary_decl.id:
+                old_primary_name = current_primary_decl.lean_name
+                new_primary_name = final_primary_decl.lean_name
+                logger.info(
+                    f"Updating StatementGroup ID {sg.id}: "
+                    f"Old primary: '{old_primary_name}' "
+                    f"(ID: {sg.primary_decl_id}), "
+                    f"New primary: '{new_primary_name}' "
+                    f"(ID: {final_primary_decl.id})"
+                )
+                sg.primary_decl_id = final_primary_decl.id
+                sg.docstring = final_primary_decl.docstring
+                session.add(sg)
+                updated_groups_count += 1
+                pending_updates_in_batch += 1
 
             if pending_updates_in_batch >= BATCH_SIZE:
                 logger.info(
@@ -143,7 +310,9 @@ def update_primary_declarations_in_db(db_url: str):
                 pending_updates_in_batch = 0
 
         if session.dirty:
-            logger.info(f"Committing final {len(session.dirty)} outstanding changes...")
+            logger.info(
+                f"Committing final {len(list(session.dirty))} outstanding changes..."
+            )
             session.commit()
 
     except Exception as e:
@@ -158,8 +327,6 @@ def update_primary_declarations_in_db(db_url: str):
 
 
 if __name__ == "__main__":
-    logger.info(
-        "Starting script to update primary declarations based on shorter prefix names."
-    )
+    logger.info("Starting script to update primary declarations with enhanced logic.")
     update_primary_declarations_in_db(DATABASE_URL)
     logger.info("Script finished.")

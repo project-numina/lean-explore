@@ -216,3 +216,4 @@ extractor/.lake/
 .wrangler/
 search_results.json
 evaluation_output.json
+evaluation_output_llm.txt

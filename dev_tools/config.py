@@ -37,7 +37,7 @@ if not logging.getLogger().hasHandlers():
 # Default filenames
 DEFAULT_CONFIG_FILENAME = "config.yml"
 DEFAULT_COSTS_FILENAME = (
-    "model_costs.json"  # Expected in 'data/' subdirectory of project root
+    "model_costs.json"
 )
 
 # Environment variables for specifying config file paths explicitly
@@ -161,8 +161,7 @@ def load_configuration(
                     )
 
             if effective_costs_path is None:
-                # Costs file is expected in 'data' subdirectory of project root
-                candidate_path = project_root / "data" / DEFAULT_COSTS_FILENAME
+                candidate_path = project_root / DEFAULT_COSTS_FILENAME
                 if candidate_path.is_file():
                     effective_costs_path = candidate_path
                     logger.info(
@@ -190,19 +189,6 @@ def load_configuration(
                 "Using fallback config path in CWD: '%s'", effective_config_path
             )
         if effective_costs_path is None:
-            # Costs file fallback to CWD/data/ (consistent with derived) or just CWD?
-            # For simplicity, CWD directly for fallback if 'data' subfolder method is
-            # too complex here.
-            # Or, stick to project_root/data if project_root itself was CWD
-            # The current logic already checks derived paths first. If project_root
-            # was CWD, it would have checked CWD/data/...
-            # So, a direct CWD fallback for costs might be CWD/model_costs.json
-            # Let's keep costs fallback relative to CWD, in a 'data' subfolder if
-            # that's intended structure,
-            # or directly in CWD if the "data" subfolder is only for the
-            # "project root" derived path.
-            # For simplicity and consistency with config.yml, try
-            # CWD/data/model_costs.json first, then CWD/model_costs.json
             costs_cwd_data_path = cwd / "data" / DEFAULT_COSTS_FILENAME
             costs_cwd_direct_path = cwd / DEFAULT_COSTS_FILENAME
             if costs_cwd_data_path.is_file():

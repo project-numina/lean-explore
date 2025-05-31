@@ -266,7 +266,7 @@ def format_search_results_for_prompt(
         code, docstring, informal_desc = format_single_hit(hit_dict, engine_key)
 
         item_parts = [
-            f"RESULT {i+1}\n",
+            f"RESULT {i + 1}\n",
             "Code:",
             f"{code}\n",
             "Docstring:",
@@ -317,7 +317,7 @@ def construct_llm_prompt(
         "- Engine A = Engine B = Engine C"
     )
 
-    user_prompt_parts = [f"Original Query: \"{query}\"\n"]
+    user_prompt_parts = [f'Original Query: "{query}"\n']
     user_prompt_parts.append("Search Results:\n")
 
     for placeholder in sorted(engine_placeholders.keys()):
@@ -436,10 +436,7 @@ def parse_llm_ranking(
             all_placeholders_in_segment_were_problematic = True
             for ph_candidate_raw_check in placeholder_candidates:
                 ph_stripped_check = ph_candidate_raw_check.strip()
-                if (
-                    ph_stripped_check
-                    and ph_stripped_check in placeholder_to_engine_map
-                ):
+                if ph_stripped_check and ph_stripped_check in placeholder_to_engine_map:
                     all_placeholders_in_segment_were_problematic = False
                     break
             if all_placeholders_in_segment_were_problematic:
@@ -539,10 +536,8 @@ async def evaluate_single_query(
         current_placeholder_to_engine_map[placeholder] = actual_engine_name
 
         engine_specific_results = query_data.get(engine_key)
-        formatted_results_for_prompt[placeholder] = (
-            format_search_results_for_prompt(
-                engine_specific_results, engine_key, MAX_RESULTS_TO_DISPLAY_PER_ENGINE
-            )
+        formatted_results_for_prompt[placeholder] = format_search_results_for_prompt(
+            engine_specific_results, engine_key, MAX_RESULTS_TO_DISPLAY_PER_ENGINE
         )
 
     evaluation_entry["placeholder_to_engine_map"] = current_placeholder_to_engine_map
@@ -670,8 +665,7 @@ async def main_evaluation_loop():
             print(f"No search data found in '{search_results_path}'.")
             return
         print(
-            f"Loaded {len(all_search_data)} query records from "
-            f"'{search_results_path}'."
+            f"Loaded {len(all_search_data)} query records from '{search_results_path}'."
         )
     except json.JSONDecodeError:
         print(f"Error: Could not decode JSON from '{search_results_path}'.")
@@ -706,8 +700,10 @@ async def main_evaluation_loop():
                 existing_evaluations = json.load(f_in)
                 if isinstance(existing_evaluations, list):
                     for eval_item in existing_evaluations:
-                        if isinstance(eval_item, dict) and \
-                            "original_query" in eval_item:
+                        if (
+                            isinstance(eval_item, dict)
+                            and "original_query" in eval_item
+                        ):
                             processed_queries_set.add(eval_item["original_query"])
                             all_evaluations.append(eval_item)  # type: ignore
                     print(
@@ -790,7 +786,9 @@ async def main_evaluation_loop():
                     with open(evaluation_output_path, "w", encoding="utf-8") as f_out:
                         json.dump(
                             serializable_evaluations,
-                            f_out, indent=4, ensure_ascii=False
+                            f_out,
+                            indent=4,
+                            ensure_ascii=False,
                         )
                 except Exception as e:
                     tqdm.write(
@@ -801,9 +799,7 @@ async def main_evaluation_loop():
                 tqdm.write(f"Critical error processing a query evaluation task: {e}")
 
     try:
-        serializable_evaluations = convert_sets_to_lists_in_evaluations(
-            all_evaluations
-        )
+        serializable_evaluations = convert_sets_to_lists_in_evaluations(all_evaluations)
         with open(evaluation_output_path, "w", encoding="utf-8") as f_out:
             json.dump(serializable_evaluations, f_out, indent=4, ensure_ascii=False)
         print(
@@ -823,6 +819,7 @@ async def main_evaluation_loop():
         print(f"Total Estimated Cost: ${total_cost:.4f}")
     else:
         print("\nCost tracker not available or not initialized in GeminiClient.")
+
 
 if __name__ == "__main__":
     if not os.getenv("GEMINI_API_KEY"):
