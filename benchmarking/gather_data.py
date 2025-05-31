@@ -5,11 +5,11 @@
 import asyncio
 import json
 import os
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import requests
-from tqdm.asyncio import tqdm # For progress bar
+from tqdm.asyncio import tqdm  # For progress bar
 
 try:
     from lean_explore.api.client import Client as LeanExploreClient
@@ -18,20 +18,20 @@ try:
     LEANEXPLORE_AVAILABLE = True
 except ImportError:
     LEANEXPLORE_AVAILABLE = False
-    LeanExploreClient = None # type: ignore
-    lean_explore_config_utils = None # type: ignore
+    LeanExploreClient = None  # type: ignore
+    lean_explore_config_utils = None  # type: ignore
     print(
         "Warning: lean_explore package not found. LeanExplore search will be skipped."
     )
 
 
 # --- Configuration Constants ---
-BENCHMARK_QUERIES_FILE = "queries.txt"    # Input file for search queries.
+BENCHMARK_QUERIES_FILE = "queries.txt"  # Input file for search queries.
 OUTPUT_JSON_FILE = "search_results.json"  # Output file for search results.
-NUM_LEANSEARCH_RESULTS = 10               # Default number of results from LeanSearch.
-MOOGLE_LIMIT = 10                         # Default number of results from Moogle.
-NUM_LEANEXPLORE_RESULTS = 10              # Default number of results from LeanExplore.
-MAX_CONCURRENT_REQUESTS = 1               # Max concurrent search operations.
+NUM_LEANSEARCH_RESULTS = 10  # Default number of results from LeanSearch.
+MOOGLE_LIMIT = 10  # Default number of results from Moogle.
+NUM_LEANEXPLORE_RESULTS = 10  # Default number of results from LeanExplore.
+MAX_CONCURRENT_REQUESTS = 1  # Max concurrent search operations.
 # -----------------------------
 
 
@@ -75,7 +75,6 @@ def search_leansearch(query: str, num_results: int = 50) -> dict:
         response_obj.raise_for_status()
         return response_obj.json()
     except requests.exceptions.RequestException as e:
-        # Shorten print for progress bar readability
         print(f"Error LeanSearch '{query[:30]}...': {e}")
         status_code = e.response.status_code if e.response is not None else None
         return {"error": str(e), "status_code": status_code}
@@ -159,7 +158,7 @@ async def initialize_leanexplore_client() -> Optional[LeanExploreClient]:
         try:
             api_key = lean_explore_config_utils.load_api_key()
         except Exception as e:
-            tqdm.write( # Use tqdm.write to avoid interfering with progress bar
+            tqdm.write(  # Use tqdm.write to avoid interfering with progress bar
                 "Note: Could not load API key using lean_explore.cli.config_utils:"
                 f" {e}. Trying environment variable."
             )
@@ -224,7 +223,8 @@ async def search_leanexplore(
         }
     except httpx.HTTPStatusError as e_http:
         error_msg = (
-            f"LeanExplore API Error for '{query_str[:30]}...': {e_http.response.status_code}"
+            f"LeanExplore API Error for '{query_str[:30]}...': "
+            f"{e_http.response.status_code}"
         )
         if hasattr(e_http.response, "text") and e_http.response.text:
             error_msg += f" - {e_http.response.text[:200]}"
@@ -240,11 +240,14 @@ async def search_leanexplore(
             **error_details,
         }
     except httpx.RequestError as e_req:
-        tqdm.write(f"LeanExplore Network request failed for '{query_str[:30]}...': {e_req}")
+        tqdm.write(
+            f"LeanExplore Network request failed for '{query_str[:30]}...': {e_req}"
+        )
         return {"error": f"Network request failed: {str(e_req)}", "query": query_str}
     except Exception as e:
         tqdm.write(
-            f"An unexpected error occurred searching LeanExplore for '{query_str[:30]}...': {e}"
+            f"An unexpected error occurred searching LeanExplore for "
+            f"'{query_str[:30]}...': {e}"
         )
         return {"error": str(e), "query": query_str}
 
@@ -265,9 +268,7 @@ async def _fetch_leansearch_concurrently(
         error dictionary.
     """
     async with semaphore:
-        result = await asyncio.to_thread(
-            search_leansearch, query_str, num_results
-        )
+        result = await asyncio.to_thread(search_leansearch, query_str, num_results)
         return query_str, "leansearch", result
 
 
@@ -315,7 +316,7 @@ async def _fetch_leanexplore_concurrently(
         return query_str, "leanexplore", result
 
 
-async def gather_all_search_data( # pylint: disable=too-many-locals, too-many-statements, too-many-branches
+async def gather_all_search_data(  # pylint: disable=too-many-locals, too-many-statements, too-many-branches
     queries_filepath: str,
     output_filepath: str,
     lean_num_results: int,
@@ -356,7 +357,7 @@ async def gather_all_search_data( # pylint: disable=too-many-locals, too-many-st
                             existing_results_map[item["query"]] = item
                         else:
                             tqdm.write(
-                                f"Warning: Skipping malformed item in existing data: "
+                                "Warning: Skipping malformed item in existing data: "
                                 f"{item}"
                             )
                     tqdm.write(
@@ -394,14 +395,18 @@ async def gather_all_search_data( # pylint: disable=too-many-locals, too-many-st
         )
         return
     except Exception as e:
-        tqdm.write(f"An unexpected error occurred while reading '{queries_filepath}': {e}")
+        tqdm.write(
+            f"An unexpected error occurred while reading '{queries_filepath}': {e}"
+        )
         return
 
     if not queries:
         tqdm.write(f"No queries found in '{queries_filepath}'. Exiting.")
         return
 
-    tqdm.write(f"Successfully read {len(queries)} unique, non-empty queries to process.")
+    tqdm.write(
+        f"Successfully read {len(queries)} unique, non-empty queries to process."
+    )
 
     for query_str_item in queries:
         if query_str_item in existing_results_map:
@@ -437,12 +442,14 @@ async def gather_all_search_data( # pylint: disable=too-many-locals, too-many-st
             isinstance(current_ls_results, dict) and "error" in current_ls_results
         ):
             task_coroutines.append(
-                asyncio.create_task(_fetch_leansearch_concurrently(
-                    query_str_item, lean_num_results, semaphore
-                ))
+                asyncio.create_task(
+                    _fetch_leansearch_concurrently(
+                        query_str_item, lean_num_results, semaphore
+                    )
+                )
             )
         else:
-            tqdm.write( # Use tqdm.write for non-progress messages
+            tqdm.write(  # Use tqdm.write for non-progress messages
                 f"  LeanSearch: Skipping '{query_str_item}', results already exist."
             )
 
@@ -455,14 +462,14 @@ async def gather_all_search_data( # pylint: disable=too-many-locals, too-many-st
             and "error" in current_moogle_results
         ):
             task_coroutines.append(
-                asyncio.create_task(_fetch_moogle_concurrently(
-                    query_str_item, moogle_num_results, semaphore
-                ))
+                asyncio.create_task(
+                    _fetch_moogle_concurrently(
+                        query_str_item, moogle_num_results, semaphore
+                    )
+                )
             )
         else:
-            tqdm.write(
-                f"  Moogle: Skipping '{query_str_item}', results already exist."
-            )
+            tqdm.write(f"  Moogle: Skipping '{query_str_item}', results already exist.")
 
         # LeanExplore tasks
         if LEANEXPLORE_AVAILABLE and leanexplore_client_instance:
@@ -470,26 +477,33 @@ async def gather_all_search_data( # pylint: disable=too-many-locals, too-many-st
                 "leanexplore_results"
             )
             if current_le_results is None or (
-                isinstance(current_le_results, dict)
-                and "error" in current_le_results
+                isinstance(current_le_results, dict) and "error" in current_le_results
             ):
                 task_coroutines.append(
-                    asyncio.create_task(_fetch_leanexplore_concurrently(
-                        query_str_item,
-                        leanexplore_client_instance,
-                        leanexplore_num_results,
-                        semaphore,
-                    ))
+                    asyncio.create_task(
+                        _fetch_leanexplore_concurrently(
+                            query_str_item,
+                            leanexplore_client_instance,
+                            leanexplore_num_results,
+                            semaphore,
+                        )
+                    )
                 )
             else:
                 tqdm.write(
-                    f"  LeanExplore: Skipping '{query_str_item}', results already exist."
+                    "  LeanExplore: Skipping "
+                    f"'{query_str_item}', results already exist."
                 )
 
     if not task_coroutines:
-        tqdm.write("\nNo new search tasks to perform. All results may already be cached.")
+        tqdm.write(
+            "\nNo new search tasks to perform. All results may already be cached."
+        )
     else:
-        tqdm.write(f"\nProcessing {len(task_coroutines)} search tasks (max {max_concurrent_requests} concurrently):")
+        tqdm.write(
+            f"\nProcessing {len(task_coroutines)} search tasks (max "
+            f"{max_concurrent_requests} concurrently):"
+        )
         all_results_tuples = await tqdm.gather(
             *task_coroutines, desc="Searching", unit="task"
         )
@@ -515,7 +529,9 @@ async def gather_all_search_data( # pylint: disable=too-many-locals, too-many-st
     # Apply global LeanExplore statuses if it was not runnable for this session,
     # potentially overwriting existing results/errors for leanexplore_results.
     if not LEANEXPLORE_AVAILABLE:
-        tqdm.write("\nUpdating LeanExplore status for all queries: package not available.")
+        tqdm.write(
+            "\nUpdating LeanExplore status for all queries: package not available."
+        )
         for query_str_item in queries:
             current_le_res = all_query_data_map[query_str_item].get(
                 "leanexplore_results"
@@ -562,7 +578,9 @@ async def gather_all_search_data( # pylint: disable=too-many-locals, too-many-st
             f" '{output_filepath}'."
         )
     except Exception as e:
-        tqdm.write(f"An error occurred while writing results to '{output_filepath}': {e}")
+        tqdm.write(
+            f"An error occurred while writing results to '{output_filepath}': {e}"
+        )
 
 
 async def main() -> None:

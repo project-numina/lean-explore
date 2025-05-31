@@ -5,7 +5,7 @@
 import json
 import os
 from collections import defaultdict
-from typing import Any, Dict, List, DefaultDict
+from typing import Any, DefaultDict, Dict, List
 
 EVALUATION_OUTPUT_FILE = "evaluation_output.json"
 PLACE_MAP = {1: "1st", 2: "2nd", 3: "3rd"}
@@ -28,7 +28,8 @@ def calculate_rank_statistics(
         defaultdicts mapping place strings ('1st', '2nd', '3rd') to
         another defaultdict. This inner defaultdict maps tie type
         ('total', 'solo', '2-way tie', '3-way tie') to counts.
-        Example:
+
+    Example:
         {'EngineA': {
             '1st': {'total': 10, 'solo': 5, '2-way tie': 5},
             '2nd': {'total': 3, 'solo': 3}
@@ -85,7 +86,7 @@ def calculate_rank_statistics(
                     for engine_name in rank_group:
                         engine_scores[engine_name][place_key][tie_type_detail_key] += 1
                         engine_scores[engine_name][place_key]["total"] += 1
-            
+
             current_place += len(rank_group)
 
     return engine_scores
@@ -109,7 +110,7 @@ def display_rank_statistics(
 
     for engine_name in sorted_engine_names:
         print(f"\nEngine: {engine_name}")
-        
+
         # Check if the engine has any scored places at all
         has_any_score = any(
             engine_scores[engine_name][place]["total"] > 0 for place in PLACES_TO_REPORT
@@ -147,7 +148,7 @@ def main() -> None:
         return
 
     try:
-        with open(eval_file_path, "r", encoding="utf-8") as f:
+        with open(eval_file_path, encoding="utf-8") as f:
             evaluation_data = json.load(f)
         if not isinstance(evaluation_data, list):
             print(

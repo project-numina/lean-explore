@@ -17,12 +17,12 @@ from typing import Any, Dict, List, Tuple
 # Assuming inspect_prompts.py is in the same directory as evaluate_results.py
 try:
     from search_engine_ranker import (
-        SEARCH_RESULTS_FILE,
+        MAX_RESULTS_TO_DISPLAY_PER_ENGINE,
         SEARCH_ENGINE_KEYS,
         SEARCH_ENGINE_NAMES,
-        MAX_RESULTS_TO_DISPLAY_PER_ENGINE,
-        format_search_results_for_prompt,
+        SEARCH_RESULTS_FILE,
         construct_llm_prompt,
+        format_search_results_for_prompt,
     )
 except ImportError as e:
     print(
@@ -58,7 +58,7 @@ def display_prompts_for_query(query_index: int, permutation_index: int) -> None:
         return
 
     try:
-        with open(search_results_path, "r", encoding="utf-8") as f:
+        with open(search_results_path, encoding="utf-8") as f:
             all_search_data = json.load(f)
         if not isinstance(all_search_data, list):
             print(
@@ -78,7 +78,8 @@ def display_prompts_for_query(query_index: int, permutation_index: int) -> None:
     if not 0 <= query_index < len(all_search_data):
         print(
             f"Error: query_index {query_index} is out of bounds. "
-            f"File contains {len(all_search_data)} queries (indices 0 to {len(all_search_data)-1})."
+            f"File contains {len(all_search_data)} queries "
+            f"(indices 0 to {len(all_search_data)-1})."
         )
         return
 
@@ -152,9 +153,8 @@ if __name__ == "__main__":
         metavar=f"[0-{len(list(permutations(SEARCH_ENGINE_KEYS)))-1}]",
         help=(
             "Index of the search engine permutation to use (default: 0). "
-            "There are {} permutations for {} engines.".format(
-                len(list(permutations(SEARCH_ENGINE_KEYS))), len(SEARCH_ENGINE_KEYS)
-            )
+            f"There are {len(list(permutations(SEARCH_ENGINE_KEYS)))} permutations "
+            f"for {len(SEARCH_ENGINE_KEYS)} engines."
         ),
     )
     args = parser.parse_args()

@@ -5,10 +5,9 @@
 import asyncio
 import json
 import os
-import random
-from itertools import permutations
-from typing import Any, Dict, List, Optional, Tuple, Union, Set
 import sys
+from itertools import permutations
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from tqdm.asyncio import tqdm
 
@@ -34,15 +33,17 @@ except ImportError:
     GeminiClient = None  # type: ignore
     GeminiCostTracker = None  # type: ignore
     import sys
+
     sys.exit(1)
 
 
 # --- Configuration Constants ---
 SEARCH_RESULTS_FILE = "search_results.json"
 EVALUATION_OUTPUT_FILE = "evaluation_output.json"
-LLM_GENERATION_MODEL = "gemini-1.5-flash-latest" # Updated to a generally available model
+LLM_GENERATION_MODEL = "gemini-1.5-flash-latest"  # Updated to a generally
+# available model
 MAX_RESULTS_TO_DISPLAY_PER_ENGINE = 5
-MAX_CONCURRENT_LLM_CALLS = 10                    # Maximum number of concurrent LLM calls
+MAX_CONCURRENT_LLM_CALLS = 10  # Maximum number of concurrent LLM calls
 
 SEARCH_ENGINE_KEYS = [
     "leansearch_results",
@@ -54,9 +55,14 @@ SEARCH_ENGINE_NAMES = {
     "moogle_results": "Moogle",
     "leanexplore_results": "LeanExplore",
 }
+
+
 # -----------------------------
 
-def convert_sets_to_lists_in_evaluations(eval_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+def convert_sets_to_lists_in_evaluations(
+    eval_data: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
     """Converts sets in llm_parsed_ranking to lists for JSON serialization.
 
     Args:
@@ -67,9 +73,10 @@ def convert_sets_to_lists_in_evaluations(eval_data: List[Dict[str, Any]]) -> Lis
     """
     serializable_data = []
     for entry in eval_data:
-        new_entry = entry.copy() # Create a shallow copy to modify
-        if "llm_parsed_ranking" in new_entry and isinstance(new_entry["llm_parsed_ranking"], list):
-            # Convert each set in the list to a list
+        new_entry = entry.copy()
+        if "llm_parsed_ranking" in new_entry and isinstance(
+            new_entry["llm_parsed_ranking"], list
+        ):
             new_entry["llm_parsed_ranking"] = [
                 list(rank_set) if isinstance(rank_set, set) else rank_set
                 for rank_set in new_entry["llm_parsed_ranking"]
@@ -90,27 +97,26 @@ def strip_moogle_docstring(text: Optional[str]) -> str:
     if not text:
         return "N/A"
     text = text.strip()
-    # Remove block comment delimiters like /-- ... -/ or /--! ... -/
     if (text.startswith("/--") or text.startswith("/-!")) and text.endswith("-/"):
         text = text[3:-2].strip()
 
-    # Remove line comment markers like -- or - at the beginning of lines
     lines = text.splitlines()
     cleaned_lines = []
     for line in lines:
         stripped_line = line.strip()
         if stripped_line.startswith("--"):
             cleaned_lines.append(stripped_line[2:].strip())
-        elif stripped_line.startswith("- "): # Sometimes used in unformalized comments
+        elif stripped_line.startswith("- "):
             cleaned_lines.append(stripped_line[2:].strip())
         else:
-            cleaned_lines.append(line) # Keep line as is if no initial marker
+            cleaned_lines.append(line)
 
     processed_text = "\n".join(cleaned_lines).strip()
     return processed_text if processed_text else "N/A"
 
+
 def format_single_hit(hit: Dict[str, Any], engine_key: str) -> Tuple[str, str, str]:
-    """Formats a single search hit into standardized Code, Docstring, and Informal Description.
+    """Formats a single search hit into Code, Docstring, and Informal Desc.
 
     Args:
         hit: A dictionary representing a single search result.
@@ -129,7 +135,9 @@ def format_single_hit(hit: Dict[str, Any], engine_key: str) -> Tuple[str, str, s
 
         kind = actual_result.get("kind", "")
         name_list = actual_result.get("name", [])
-        full_name = ".".join(name_list) if name_list and isinstance(name_list, list) else ""
+        full_name = (
+            ".".join(name_list) if name_list and isinstance(name_list, list) else ""
+        )
         signature = actual_result.get("signature", "")
 
         statement_parts = []
@@ -140,7 +148,6 @@ def format_single_hit(hit: Dict[str, Any], engine_key: str) -> Tuple[str, str, s
         code_text = " ".join(statement_parts) + signature
         code_text = code_text.strip() if code_text.strip() else "N/A"
 
-        # Docstring is N/A for LeanSearch as per requirements
         docstring_text = "N/A"
 
         informal_name = actual_result.get("informal_name")
@@ -154,37 +161,48 @@ def format_single_hit(hit: Dict[str, Any], engine_key: str) -> Tuple[str, str, s
             informal_description_text = informal_desc_from_json
         else:
             informal_description_text = "N/A"
-        if informal_description_text is None: informal_description_text = "N/A"
-
+        if informal_description_text is None:
+            informal_description_text = "N/A"
 
     elif engine_key == "moogle_results":
         code_text = hit.get("declarationCode", "N/A")
         docstring_content = hit.get("declarationDocstring")
         docstring_text = strip_moogle_docstring(docstring_content)
-        # Informal description is N/A for Moogle as per requirements
         informal_description_text = "N/A"
 
     elif engine_key == "leanexplore_results":
         code_text = hit.get("statement_text", hit.get("display_statement_text", "N/A"))
         docstring_content = hit.get("docstring")
-        docstring_text = docstring_content.strip() if docstring_content and docstring_content.strip() else "N/A"
-        
+        docstring_text = (
+            docstring_content.strip()
+            if docstring_content and docstring_content.strip()
+            else "N/A"
+        )
+
         informal_desc_from_json = hit.get("informal_description")
-        informal_description_text = informal_desc_from_json.strip() if informal_desc_from_json and informal_desc_from_json.strip() else "N/A"
-        
+        informal_description_text = (
+            informal_desc_from_json.strip()
+            if informal_desc_from_json and informal_desc_from_json.strip()
+            else "N/A"
+        )
+
     else:
         return f"Unknown engine key: {engine_key}", "N/A", "N/A"
 
-    # Ensure "N/A" if any field is empty string after processing
-    if not code_text.strip(): code_text = "N/A"
-    if not docstring_text.strip(): docstring_text = "N/A"
-    if not informal_description_text.strip(): informal_description_text = "N/A"
+    if not code_text.strip():
+        code_text = "N/A"
+    if not docstring_text.strip():
+        docstring_text = "N/A"
+    if not informal_description_text.strip():
+        informal_description_text = "N/A"
 
     return code_text, docstring_text, informal_description_text
 
 
 def format_search_results_for_prompt(
-    result_data: Optional[Union[Dict[str, Any], List[Any]]], engine_key: str, max_hits: int
+    result_data: Optional[Union[Dict[str, Any], List[Any]]],
+    engine_key: str,
+    max_hits: int,
 ) -> str:
     """Formats search results for a single engine for inclusion in an LLM prompt.
 
@@ -215,7 +233,12 @@ def format_search_results_for_prompt(
             return f"Unexpected data format for {engine_key}."
     elif engine_key == "moogle_results":
         if isinstance(result_data, dict):
-            hits = result_data.get("data", result_data.get("items", result_data.get("results", result_data.get("hits",[]))))
+            hits = result_data.get(
+                "data",
+                result_data.get(
+                    "items", result_data.get("results", result_data.get("hits", []))
+                ),
+            )
         elif isinstance(result_data, list):
             hits = result_data
         else:
@@ -234,7 +257,7 @@ def format_search_results_for_prompt(
     valid_hits = [hit for hit in hits if isinstance(hit, dict)]
     if not valid_hits:
         if hits:
-             return "No valid result items found to display (items are not dictionaries)."
+            return "No valid result items found to display."
         return "No results found by this engine."
 
     formatted_item_blocks_list = []
@@ -244,12 +267,12 @@ def format_search_results_for_prompt(
 
         item_parts = [
             f"RESULT {i+1}\n",
-            f"Code:",
-            f"{code}\n", # Directly use the content
-            f"Docstring:",
-            f"{docstring}\n", # Directly use the content
-            f"Informal Description:",
-            f"{informal_desc}" # Directly use the content
+            "Code:",
+            f"{code}\n",
+            "Docstring:",
+            f"{docstring}\n",
+            "Informal Description:",
+            f"{informal_desc}",
         ]
         formatted_item_blocks_list.append("\n".join(item_parts))
 
@@ -257,16 +280,16 @@ def format_search_results_for_prompt(
 
 
 def construct_llm_prompt(
-    query: str,
-    engine_placeholders: Dict[str, str],
-    formatted_results: Dict[str, str]
+    query: str, engine_placeholders: Dict[str, str], formatted_results: Dict[str, str]
 ) -> Tuple[str, str]:
     """Constructs the system and user prompts for the LLM.
 
     Args:
         query: The original search query.
-        engine_placeholders: Maps placeholder names (Engine A, B, C) to actual engine names.
-        formatted_results: Maps placeholder names to their formatted search result strings.
+        engine_placeholders: Maps placeholder names (Engine A, B, C) to actual
+            engine names.
+        formatted_results: Maps placeholder names to their formatted search
+            result strings.
 
     Returns:
         A tuple containing the system prompt and the user prompt.
@@ -282,7 +305,8 @@ def construct_llm_prompt(
         "First, provide your detailed reasoning for the ranking. "
         "After your reasoning, on a new and final line, provide your ranking. "
         "Use the placeholders 'Engine A', 'Engine B', 'Engine C'. "
-        "Separate distinct ranks with a comma and a space (e.g., 'Engine A, Engine B'). "
+        "Separate distinct ranks with a comma and a space (e.g., "
+        "'Engine A, Engine B'). "
         "Separate tied engines at the same rank with an equals sign and spaces "
         "around it (e.g., 'Engine A = Engine B'). "
         "All three engine placeholders must be present in the ranking line.\n"
@@ -304,13 +328,17 @@ def construct_llm_prompt(
         )
 
     user_prompt_parts.append(
-        "\nBased on the original query, please provide your detailed reasoning for ranking "
-        "Engine A, Engine B, and Engine C. After your reasoning, on a new and final line, "
-        "state your ranking of Engine A, Engine B, and Engine C from best to worst. "
-        "Use only the placeholders 'Engine A', 'Engine B', 'Engine C'.\n"
-        "If engines are tied, list them separated by ' = ' (e.g., 'Engine A = Engine B').\n"
-        "If ranks are distinct, separate them by ', ' (e.g., 'Engine A, Engine B').\n"
-        "This final line must contain only the ranking and all three engine placeholders.\n"
+        "\nBased on the original query, please provide your detailed reasoning "
+        "for ranking Engine A, Engine B, and Engine C. After your reasoning, "
+        "on a new and final line, state your ranking of Engine A, Engine B, "
+        "and Engine C from best to worst. Use only the placeholders 'Engine A', "
+        "'Engine B', 'Engine C'.\n"
+        "If engines are tied, list them separated by ' = ' "
+        "(e.g., 'Engine A = Engine B').\n"
+        "If ranks are distinct, separate them by ', ' "
+        "(e.g., 'Engine A, Engine B').\n"
+        "This final line must contain only the ranking and all three engine "
+        "placeholders.\n"
         "For example:\n"
         "Engine B, Engine A, Engine C\n"
         "OR\n"
@@ -354,89 +382,117 @@ def parse_llm_ranking(
         ranked multiple times in different groups, or unrecognized placeholders).
     """
     parsed_ranks: List[Set[str]] = []
-    # Tracks engine names that have been assigned to any rank group to ensure each engine is ranked only once.
     engines_assigned_to_a_rank: Set[str] = set()
 
-    # Split by the primary rank delimiter (comma)
-    rank_group_segments = ranking_line.split(',')
+    rank_group_segments = ranking_line.split(",")
 
     for segment_str in rank_group_segments:
         stripped_segment = segment_str.strip()
-        if not stripped_segment: # Handles empty segments from "A,,B" or trailing commas
-            print(f"Warning: Empty segment found after splitting by comma in ranking line: '{ranking_line}'. Skipping segment.")
-            continue # Skip empty segments
+        if not stripped_segment:
+            print(
+                f"Warning: Empty segment found after splitting by comma in "
+                f"ranking line: '{ranking_line}'. Skipping segment."
+            )
+            continue
 
-        # Split this segment by the tie delimiter (equals sign)
-        placeholder_candidates = stripped_segment.split('=')
-        
+        placeholder_candidates = stripped_segment.split("=")
+
         current_rank_engine_names: Set[str] = set()
 
         for ph_candidate_raw in placeholder_candidates:
             placeholder_str = ph_candidate_raw.strip()
-            if not placeholder_str: # Handles empty strings from "A = = B" or "A="
-                print(f"Warning: Empty placeholder string found after splitting by '=' in segment '{stripped_segment}'. Skipping placeholder.")
-                continue # Skip empty strings resulting from split
+            if not placeholder_str:
+                print(
+                    f"Warning: Empty placeholder string found after splitting by "
+                    f"'=' in segment '{stripped_segment}'. Skipping placeholder."
+                )
+                continue
 
             if placeholder_str in placeholder_to_engine_map:
                 engine_name = placeholder_to_engine_map[placeholder_str]
                 current_rank_engine_names.add(engine_name)
             else:
-                print(f"Warning: Unrecognized placeholder '{placeholder_str}' found in segment '{stripped_segment}' "
-                      f"from LLM ranking line: '{ranking_line}'.")
-        
+                print(
+                    f"Warning: Unrecognized placeholder '{placeholder_str}' found in "
+                    f"segment '{stripped_segment}' from LLM ranking line: "
+                    f"'{ranking_line}'."
+                )
+
         if current_rank_engine_names:
-            # Check if any engine in the current group has already been assigned to a *previous* rank.
             for engine_in_current_group in current_rank_engine_names:
                 if engine_in_current_group in engines_assigned_to_a_rank:
-                    print(f"Critical Error: Engine '{engine_in_current_group}' in current group {current_rank_engine_names} "
-                          f"(from segment '{stripped_segment}') was already assigned to a previous rank. "
-                          f"Malformed LLM response: '{ranking_line}'. Aborting parse.")
-                    return [] # Invalidate the entire ranking
+                    print(
+                        f"Critical Error: Engine '{engine_in_current_group}' in "
+                        f"current group {current_rank_engine_names} (from segment "
+                        f"'{stripped_segment}') was already assigned to a previous "
+                        f"rank. Malformed LLM response: '{ranking_line}'. "
+                        "Aborting parse."
+                    )
+                    return []
 
             parsed_ranks.append(current_rank_engine_names)
             engines_assigned_to_a_rank.update(current_rank_engine_names)
-        elif stripped_segment: # Segment was not empty but resulted in no recognized engines
-             # This check determines if all parts of the segment were indeed unrecognized or empty
-             all_placeholders_in_segment_were_problematic = True
-             for ph_candidate_raw_check in placeholder_candidates:
-                 ph_stripped_check = ph_candidate_raw_check.strip()
-                 if ph_stripped_check and ph_stripped_check in placeholder_to_engine_map:
-                     all_placeholders_in_segment_were_problematic = False # Found a recognized one, so this branch is not for this case
-                     break
-             if all_placeholders_in_segment_were_problematic:
-                  print(f"Warning: Segment '{stripped_segment}' from ranking line '{ranking_line}' "
-                        "contained only unrecognized or empty placeholders, resulting in no engines for this rank group.")
+        elif stripped_segment:
+            all_placeholders_in_segment_were_problematic = True
+            for ph_candidate_raw_check in placeholder_candidates:
+                ph_stripped_check = ph_candidate_raw_check.strip()
+                if (
+                    ph_stripped_check
+                    and ph_stripped_check in placeholder_to_engine_map
+                ):
+                    all_placeholders_in_segment_were_problematic = False
+                    break
+            if all_placeholders_in_segment_were_problematic:
+                print(
+                    f"Warning: Segment '{stripped_segment}' from ranking line "
+                    f"'{ranking_line}' contained only unrecognized or empty "
+                    "placeholders, resulting in no engines for this rank group."
+                )
 
-    # --- Final Validation ---
     expected_engine_names_set = set(placeholder_to_engine_map.values())
-    
+
     if engines_assigned_to_a_rank != expected_engine_names_set:
         error_messages = []
         missing_engines = expected_engine_names_set - engines_assigned_to_a_rank
-        extra_engines = engines_assigned_to_a_rank - expected_engine_names_set # Should be empty if placeholder mapping is correct
-        
+        extra_engines = engines_assigned_to_a_rank - expected_engine_names_set
+
         if missing_engines:
             error_messages.append(f"Missing expected engines: {missing_engines}")
-        if extra_engines: 
-            error_messages.append(f"Found unexpected/unmapped engines in final ranked set: {extra_engines}")
-        
-        if not error_messages and engines_assigned_to_a_rank != expected_engine_names_set : # General fallback
-             error_messages.append(f"The set of finally ranked engines ({engines_assigned_to_a_rank}) "
-                                   f"does not exactly match the expected set of engines ({expected_engine_names_set}).")
+        if extra_engines:
+            error_messages.append(
+                f"Found unexpected/unmapped engines in final ranked set: "
+                f"{extra_engines}"
+            )
 
-        # Avoid printing empty error messages list if logic above didn't populate it but sets still don't match
+        if (
+            not error_messages
+            and engines_assigned_to_a_rank != expected_engine_names_set
+        ):
+            error_messages.append(
+                f"The set of finally ranked engines ({engines_assigned_to_a_rank}) "
+                f"does not exactly match the expected set of engines "
+                f"({expected_engine_names_set})."
+            )
+
         if not error_messages:
-             error_messages.append("General mismatch between ranked engines and expected engines.")
+            error_messages.append(
+                "General mismatch between ranked engines and expected engines."
+            )
 
-
-        print(f"Critical Error in ranking consistency: {'; '.join(error_messages)}. "
-              f"LLM ranking line: '{ranking_line}'. Parsed structure: {parsed_ranks}. "
-              f"Engines assigned to rank: {engines_assigned_to_a_rank}. Aborting parse.")
+        print(
+            f"Critical Error in ranking consistency: {'; '.join(error_messages)}. "
+            f"LLM ranking line: '{ranking_line}'. Parsed structure: {parsed_ranks}. "
+            f"Engines assigned to rank: {engines_assigned_to_a_rank}. Aborting parse."
+        )
         return []
-        
-    if not parsed_ranks and ranking_line.strip(): # Input line was not empty, but nothing valid was parsed
-        print(f"Critical Error: Failed to parse any valid ranking structure from the non-empty LLM ranking line: '{ranking_line}'. "
-              "Ensure the LLM response adheres to the expected format (e.g., 'Engine A, Engine B = Engine C'). Aborting parse.")
+
+    if not parsed_ranks and ranking_line.strip():
+        print(
+            f"Critical Error: Failed to parse any valid ranking structure from the "
+            f"non-empty LLM ranking line: '{ranking_line}'. Ensure the LLM response "
+            "adheres to the expected format (e.g., 'Engine A, Engine B = Engine C'). "
+            "Aborting parse."
+        )
         return []
 
     return parsed_ranks
@@ -462,12 +518,14 @@ async def evaluate_single_query(
     query_string = query_data["query"]
     evaluation_entry: Dict[str, Any] = {
         "original_query": query_string,
-        "engines_presented_order": [SEARCH_ENGINE_NAMES.get(ek, ek) for ek in engine_permutation],
+        "engines_presented_order": [
+            SEARCH_ENGINE_NAMES.get(ek, ek) for ek in engine_permutation
+        ],
         "placeholder_to_engine_map": {},
         "llm_system_prompt": "",
         "llm_user_prompt": "",
         "llm_raw_response": None,
-        "llm_parsed_ranking": [], # Will store List[Set[str]]
+        "llm_parsed_ranking": [],
         "llm_error": None,
     }
 
@@ -481,8 +539,10 @@ async def evaluate_single_query(
         current_placeholder_to_engine_map[placeholder] = actual_engine_name
 
         engine_specific_results = query_data.get(engine_key)
-        formatted_results_for_prompt[placeholder] = format_search_results_for_prompt(
-            engine_specific_results, engine_key, MAX_RESULTS_TO_DISPLAY_PER_ENGINE
+        formatted_results_for_prompt[placeholder] = (
+            format_search_results_for_prompt(
+                engine_specific_results, engine_key, MAX_RESULTS_TO_DISPLAY_PER_ENGINE
+            )
         )
 
     evaluation_entry["placeholder_to_engine_map"] = current_placeholder_to_engine_map
@@ -502,56 +562,65 @@ async def evaluate_single_query(
         evaluation_entry["llm_raw_response"] = llm_response_text
 
         if llm_response_text:
-            lines = llm_response_text.strip().split('\n')
+            lines = llm_response_text.strip().split("\n")
             ranking_line = ""
-            # has_content_before_ranking = False # Not strictly needed with current logic
 
             if lines:
-                # Find the last non-empty line for ranking
                 for line_idx in range(len(lines) - 1, -1, -1):
                     current_line_stripped = lines[line_idx].strip()
-                    if current_line_stripped: # Found the last non-empty line
+                    if current_line_stripped:
                         ranking_line = current_line_stripped
-                        # Check if there was any content (reasoning) before this line
-                        # if line_idx > 0:
-                        #     for prev_line_idx in range(line_idx):
-                        #         if lines[prev_line_idx].strip():
-                        #             has_content_before_ranking = True
-                        #             break
                         break
-                
+
                 if ranking_line:
                     parsed_ranking_result = parse_llm_ranking(
                         ranking_line, current_placeholder_to_engine_map
                     )
                     evaluation_entry["llm_parsed_ranking"] = parsed_ranking_result
-                    if not parsed_ranking_result: 
-                         print(f"Info: Parsing of ranking line '{ranking_line}' for query "
-                               f"'{query_string[:50]}...' resulted in an empty ranking. Check warnings from parser.")
-                else: 
-                    evaluation_entry["llm_parsed_ranking"] = [] 
+                    if not parsed_ranking_result:
+                        print(
+                            f"Info: Parsing of ranking line '{ranking_line}' for query "
+                            f"'{query_string[:50]}...' resulted in an empty ranking. "
+                            "Check warnings from parser."
+                        )
+                else:
+                    evaluation_entry["llm_parsed_ranking"] = []
                     non_empty_lines_exist = any(line.strip() for line in lines)
                     if non_empty_lines_exist:
-                        print(f"Warning: LLM response for query '{query_string[:50]}...' contained text but no clear ranking line was extracted.")
-                        evaluation_entry["llm_error"] = "LLM response had content but no final ranking line was identified."
+                        print(
+                            f"Warning: LLM response for query '{query_string[:50]}...' "
+                            "contained text but no clear ranking line was extracted."
+                        )
+                        evaluation_entry["llm_error"] = (
+                            "LLM response had content but no final ranking line "
+                            "was identified."
+                        )
 
-            else: 
+            else:
                 evaluation_entry["llm_parsed_ranking"] = []
-                evaluation_entry["llm_error"] = "LLM returned an empty response after stripping newlines."
-        else: 
-            evaluation_entry["llm_parsed_ranking"] = [] 
-            evaluation_entry["llm_error"] = "LLM returned no response text (None or empty string)."
+                evaluation_entry["llm_error"] = (
+                    "LLM returned an empty response after stripping newlines."
+                )
+        else:
+            evaluation_entry["llm_parsed_ranking"] = []
+            evaluation_entry["llm_error"] = (
+                "LLM returned no response text (None or empty string)."
+            )
 
-        if not evaluation_entry["llm_parsed_ranking"] and not evaluation_entry["llm_error"] and llm_response_text:
-            if not ranking_line: 
-                 evaluation_entry["llm_error"] = "LLM response was non-empty but contained no parsable ranking line."
-
+        if (
+            not evaluation_entry["llm_parsed_ranking"]
+            and not evaluation_entry["llm_error"]
+            and llm_response_text
+        ):
+            if not ranking_line:
+                evaluation_entry["llm_error"] = (
+                    "LLM response was non-empty but contained no parsable ranking line."
+                )
 
     except Exception as e:
         print(f"Error during LLM call for query '{query_string[:50]}...': {e}")
         evaluation_entry["llm_error"] = str(e)
         evaluation_entry["llm_parsed_ranking"] = []
-
 
     return evaluation_entry
 
@@ -575,7 +644,9 @@ async def wrapped_evaluate_single_query_with_semaphore(
         A dictionary containing the evaluation details for this query.
     """
     async with semaphore:
-        return await evaluate_single_query(query_data, engine_permutation, gemini_client)
+        return await evaluate_single_query(
+            query_data, engine_permutation, gemini_client
+        )
 
 
 async def main_evaluation_loop():
@@ -590,7 +661,7 @@ async def main_evaluation_loop():
         return
 
     try:
-        with open(search_results_path, "r", encoding="utf-8") as f:
+        with open(search_results_path, encoding="utf-8") as f:
             all_search_data = json.load(f)
         if not isinstance(all_search_data, list):
             print(f"Error: '{search_results_path}' does not contain a JSON list.")
@@ -598,7 +669,10 @@ async def main_evaluation_loop():
         if not all_search_data:
             print(f"No search data found in '{search_results_path}'.")
             return
-        print(f"Loaded {len(all_search_data)} query records from '{search_results_path}'.")
+        print(
+            f"Loaded {len(all_search_data)} query records from "
+            f"'{search_results_path}'."
+        )
     except json.JSONDecodeError:
         print(f"Error: Could not decode JSON from '{search_results_path}'.")
         return
@@ -608,7 +682,10 @@ async def main_evaluation_loop():
 
     try:
         gemini_client = GeminiClient()
-        print(f"GeminiClient initialized. Using model: {LLM_GENERATION_MODEL} for evaluations.")
+        print(
+            f"GeminiClient initialized. Using model: {LLM_GENERATION_MODEL} "
+            "for evaluations."
+        )
     except Exception as e:
         print(f"Failed to initialize GeminiClient: {e}")
         print("Ensure GEMINI_API_KEY is set and config is accessible if used.")
@@ -618,24 +695,33 @@ async def main_evaluation_loop():
     num_permutations = len(engine_key_permutations)
 
     all_evaluations: List[Dict[str, Any]] = []
-    evaluation_output_path = os.path.join(os.path.dirname(__file__), EVALUATION_OUTPUT_FILE)
+    evaluation_output_path = os.path.join(
+        os.path.dirname(__file__), EVALUATION_OUTPUT_FILE
+    )
     processed_queries_set: Set[str] = set()
 
     if os.path.exists(evaluation_output_path):
         try:
-            with open(evaluation_output_path, "r", encoding="utf-8") as f_in:
+            with open(evaluation_output_path, encoding="utf-8") as f_in:
                 existing_evaluations = json.load(f_in)
                 if isinstance(existing_evaluations, list):
                     for eval_item in existing_evaluations:
-                        if isinstance(eval_item, dict) and "original_query" in eval_item:
+                        if isinstance(eval_item, dict) and \
+                            "original_query" in eval_item:
                             processed_queries_set.add(eval_item["original_query"])
-                            all_evaluations.append(eval_item) # type: ignore
-                    print(f"Loaded {len(processed_queries_set)} existing evaluations from '{evaluation_output_path}'.")
+                            all_evaluations.append(eval_item)  # type: ignore
+                    print(
+                        f"Loaded {len(processed_queries_set)} existing evaluations "
+                        f"from '{evaluation_output_path}'."
+                    )
         except Exception as e:
-            print(f"Warning: Could not load or parse existing evaluations from '{evaluation_output_path}': {e}")
+            print(
+                f"Warning: Could not load or parse existing evaluations from "
+                f"'{evaluation_output_path}': {e}"
+            )
             all_evaluations = []
             processed_queries_set = set()
-    
+
     valid_queries_for_run: List[Dict[str, Any]] = []
     non_dict_items_count = 0
     already_processed_count = 0
@@ -648,61 +734,82 @@ async def main_evaluation_loop():
                 already_processed_count += 1
         else:
             non_dict_items_count += 1
-            print(f"Warning: Found a non-dictionary or malformed item in '{SEARCH_RESULTS_FILE}': {str(item)[:100]}... This will be skipped.")
+            print(
+                f"Warning: Found a non-dictionary or malformed item in "
+                f"'{SEARCH_RESULTS_FILE}': {str(item)[:100]}... This will be skipped."
+            )
 
     if non_dict_items_count > 0:
         print(f"Total non-dictionary/malformed items skipped: {non_dict_items_count}.")
     if already_processed_count > 0:
-        print(f"Found {already_processed_count} queries in '{SEARCH_RESULTS_FILE}' that were already processed and present in '{EVALUATION_OUTPUT_FILE}'.")
-
+        print(
+            f"Found {already_processed_count} queries in '{SEARCH_RESULTS_FILE}' "
+            f"that were already processed and present in '{EVALUATION_OUTPUT_FILE}'."
+        )
 
     if not valid_queries_for_run:
-        print("No new queries to evaluate. All queries from input file are already in the output file or input was empty/invalid.")
+        print(
+            "No new queries to evaluate. All queries from input file are already "
+            "in the output file or input was empty/invalid."
+        )
     else:
-        print(f"Starting LLM evaluation for {len(valid_queries_for_run)} new queries, using up to {MAX_CONCURRENT_LLM_CALLS} concurrent tasks.")
-        
+        print(
+            f"Starting LLM evaluation for {len(valid_queries_for_run)} new queries, "
+            f"using up to {MAX_CONCURRENT_LLM_CALLS} concurrent tasks."
+        )
+
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_LLM_CALLS)
         tasks_for_as_completed = []
-        
-        # This count is the number of evaluations already completed (loaded from file)
-        # It's used to ensure the permutation index cycles correctly across multiple script runs.
-        initial_completed_eval_count = len(all_evaluations) 
+
+        initial_completed_eval_count = len(all_evaluations)
 
         for i, query_data_item in enumerate(valid_queries_for_run):
-            # Determine permutation for this specific query based on its overall sequence
-            evaluation_sequence_number = initial_completed_eval_count + i
-            current_permutation_index = evaluation_sequence_number % num_permutations
+            current_permutation_index = (
+                initial_completed_eval_count + i
+            ) % num_permutations
             current_permutation = engine_key_permutations[current_permutation_index]
-            
+
             task = wrapped_evaluate_single_query_with_semaphore(
                 query_data_item, current_permutation, gemini_client, semaphore
             )
             tasks_for_as_completed.append(task)
 
-        for future in tqdm(asyncio.as_completed(tasks_for_as_completed), total=len(tasks_for_as_completed), desc="Evaluating Queries (LLM Calls)"):
+        for future in tqdm(
+            asyncio.as_completed(tasks_for_as_completed),
+            total=len(tasks_for_as_completed),
+            desc="Evaluating Queries (LLM Calls)",
+        ):
             try:
                 evaluation_result = await future
                 all_evaluations.append(evaluation_result)
 
-                # Save incrementally as each task completes
                 try:
-                    serializable_evaluations = convert_sets_to_lists_in_evaluations(all_evaluations)
+                    serializable_evaluations = convert_sets_to_lists_in_evaluations(
+                        all_evaluations
+                    )
                     with open(evaluation_output_path, "w", encoding="utf-8") as f_out:
-                        json.dump(serializable_evaluations, f_out, indent=4, ensure_ascii=False)
+                        json.dump(
+                            serializable_evaluations,
+                            f_out, indent=4, ensure_ascii=False
+                        )
                 except Exception as e:
-                    # Using tqdm.write to avoid messing up the progress bar
-                    tqdm.write(f"Error writing intermediate results to '{evaluation_output_path}': {e}")
+                    tqdm.write(
+                        f"Error writing intermediate results to "
+                        f"'{evaluation_output_path}': {e}"
+                    )
             except Exception as e:
-                # Errors from evaluate_single_query should ideally be caught and reported within its result dict.
-                # This catches errors if the task itself fails before returning such a dict.
                 tqdm.write(f"Critical error processing a query evaluation task: {e}")
 
-
     try:
-        serializable_evaluations = convert_sets_to_lists_in_evaluations(all_evaluations)
+        serializable_evaluations = convert_sets_to_lists_in_evaluations(
+            all_evaluations
+        )
         with open(evaluation_output_path, "w", encoding="utf-8") as f_out:
             json.dump(serializable_evaluations, f_out, indent=4, ensure_ascii=False)
-        print(f"Successfully saved {len(all_evaluations)} total evaluations to '{evaluation_output_path}'.")
+        print(
+            f"Successfully saved {len(all_evaluations)} total evaluations to "
+            f"'{evaluation_output_path}'."
+        )
     except Exception as e:
         print(f"Error writing final results to '{evaluation_output_path}': {e}")
 
@@ -710,8 +817,8 @@ async def main_evaluation_loop():
         cost_summary = gemini_client.cost_tracker.get_summary()
         print("\n--- LLM Usage Cost Summary ---")
         print(json.dumps(cost_summary, indent=2))
-        total_cost = cost_summary.get('total_estimated_cost', 0.0)
-        if not isinstance(total_cost, (int, float)): 
+        total_cost = cost_summary.get("total_estimated_cost", 0.0)
+        if not isinstance(total_cost, (int, float)):
             total_cost = 0.0
         print(f"Total Estimated Cost: ${total_cost:.4f}")
     else:
@@ -723,7 +830,4 @@ if __name__ == "__main__":
             "Warning: GEMINI_API_KEY environment variable is not set. "
             "The script may fail if the API key is not configured elsewhere."
         )
-    # Ensure the model name matches what's available or intended.
-    # The constant LLM_GENERATION_MODEL is used by evaluate_single_query.
-    # print(f"Using LLM Model: {LLM_GENERATION_MODEL}") # Confirm model if needed
     asyncio.run(main_evaluation_loop())
