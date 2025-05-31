@@ -1,4 +1,4 @@
-# benchmarking/gather_data.py
+# benchmarking/gather_search_data.py
 
 """Module for gathering search data from various sources."""
 

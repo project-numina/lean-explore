@@ -215,3 +215,4 @@ extractor/.lake/
 **/.DS_Store
 .wrangler/
 search_results.json
+evaluation_output.json
