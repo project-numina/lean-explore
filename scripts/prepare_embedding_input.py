@@ -16,6 +16,7 @@ and 'text' fields. This file serves as input for subsequent embedding generation
 import argparse
 import json
 import logging
+import os
 import pathlib
 import sys
 from typing import Any, Dict, List, Optional
@@ -35,6 +36,13 @@ except ImportError as e:
     sys.exit(1)
 
 # --- Project Model & Config Imports ---
+current_script_path = os.path.abspath(__file__)
+benchmarking_dir = os.path.dirname(current_script_path)
+project_root = os.path.dirname(benchmarking_dir)
+
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+    
 try:
     from config import APP_CONFIG
 
