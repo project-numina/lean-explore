@@ -35,7 +35,7 @@ OUTPUT_JSON_FILE = "benchmarking/search_results.json"  # Output file for search 
 NUM_LEANSEARCH_RESULTS = 10  # Default number of results from LeanSearch.
 MOOGLE_LIMIT = 10  # Default number of results from Moogle.
 NUM_LEANEXPLORE_RESULTS = 10  # Default number of results from LeanExplore.
-MAX_CONCURRENT_REQUESTS = 9  # Max concurrent search operations.
+MAX_CONCURRENT_REQUESTS = 1  # Max concurrent search operations.
 # -----------------------------
 
 
