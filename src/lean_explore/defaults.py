@@ -89,7 +89,7 @@ ACTIVE_TOOLCHAIN_CONFIG_FILE_PATH: Final[pathlib.Path] = (
 
 
 # --- Default Embedding Model ---
-DEFAULT_EMBEDDING_MODEL_NAME: Final[str] = "BAAI/bge-base-en-v1.5"
+DEFAULT_EMBEDDING_MODEL_NAME: Final[str] = "BAAI/bge-large-en-v1.5"
 
 
 # --- Default Search Parameters ---
