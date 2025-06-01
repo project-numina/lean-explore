@@ -44,8 +44,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 try:
-    from config import APP_CONFIG
-
+    from dev_tools.config import APP_CONFIG
     from lean_explore.shared.models.db import StatementGroup
 except ImportError as e:
     print(
