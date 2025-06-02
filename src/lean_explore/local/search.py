@@ -599,8 +599,11 @@ def perform_search(
                 (sg_obj_for_corpus.primary_declaration.lean_name
                  if sg_obj_for_corpus.primary_declaration else None),
                 sg_obj_for_corpus.docstring,
+                sg_obj_for_corpus.informal_description,
                 sg_obj_for_corpus.informal_summary,
-                sg_obj_for_corpus.informal_description
+                sg_obj_for_corpus.display_statement_text,
+                sg_obj_for_corpus.primary_declaration.lean_name,
+                sg_obj_for_corpus.primary_declaration.source_file
             ])
         )
         bm25_corpus.append(_get_tokenized_list(combined_text_for_bm25))
