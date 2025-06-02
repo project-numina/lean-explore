@@ -254,6 +254,51 @@ def load_embedding_model(model_name: str) -> Optional[SentenceTransformer]:
         return None
 
 
+# --- Utilities ---
+
+def spacify_text(text: str) -> str:
+    """Converts a string by adding spaces around delimiters and camelCase.
+
+    This function takes a string, typically a file path or a name with
+    camelCase, and transforms it to a more human-readable format by:
+    - Replacing hyphens and underscores with single spaces.
+    - Inserting spaces to separate words in camelCase (e.g.,
+      'CamelCaseWord' becomes 'Camel Case Word').
+    - Adding spaces around common path delimiters such as '/' and '.'.
+    - Normalizing multiple consecutive spaces into single spaces.
+    - Stripping leading and trailing whitespace from the final string.
+
+    Args:
+        text: The input string to be transformed.
+
+    Returns:
+        The transformed string with spaces inserted for improved readability.
+    """
+    text_str = str(text) # Ensure input is treated as a string
+
+    first_slash_index = text_str.find('/')
+    if first_slash_index != -1:
+        text_str = text_str[first_slash_index + 1:]
+
+    # Replace hyphens and underscores with spaces
+    text_str = text_str.replace('-', ' ').replace('_', ' ').replace(".lean", "")
+    
+    # Insert spaces for camelCase
+    # Handles: lowercase/digit followed by uppercase (e.g., "oneTwo" -> "one Two")
+    text_str = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', text_str)
+    # Handles: uppercase followed by another uppercase then lowercase (e.g., "HTMLFile" -> "HTML File")
+    text_str = re.sub(r'([A-Z])([A-Z][a-z])', r'\1 \2', text_str)
+    
+    # Add spaces around specified path delimiters
+    text_str = text_str.replace('/', ' ')
+    text_str = text_str.replace('.', ' ')
+    
+    # Normalize multiple spaces to a single space and strip leading/trailing whitespace
+    text_str = re.sub(r'\s+', ' ', text_str).strip()
+    text_str = text_str.lower()
+    return text_str
+
+
 # --- Main Search Function ---
 
 
@@ -603,7 +648,7 @@ def perform_search(
                 sg_obj_for_corpus.informal_summary,
                 sg_obj_for_corpus.display_statement_text,
                 sg_obj_for_corpus.primary_declaration.lean_name,
-                sg_obj_for_corpus.primary_declaration.source_file
+                spacify_text(sg_obj_for_corpus.primary_declaration.source_file)
             ])
         )
         bm25_corpus.append(_get_tokenized_list(combined_text_for_bm25))

@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import pathlib
+import re # Added for spacify_text
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -71,6 +72,49 @@ logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_FILENAME = "embedding_input.json"
 DEFAULT_OUTPUT_FILE_PATH = PROJECT_ROOT / "data" / DEFAULT_OUTPUT_FILENAME
+
+
+def spacify_text(text: str) -> str:
+    """Converts a string by adding spaces around delimiters and camelCase.
+
+    This function takes a string, typically a file path or a name with
+    camelCase, and transforms it to a more human-readable format by:
+    - Replacing hyphens and underscores with single spaces.
+    - Inserting spaces to separate words in camelCase (e.g.,
+      'CamelCaseWord' becomes 'Camel Case Word').
+    - Adding spaces around common path delimiters such as '/' and '.'.
+    - Normalizing multiple consecutive spaces into single spaces.
+    - Stripping leading and trailing whitespace from the final string.
+
+    Args:
+        text: The input string to be transformed.
+
+    Returns:
+        The transformed string with spaces inserted for improved readability.
+    """
+    text_str = str(text) # Ensure input is treated as a string
+
+    first_slash_index = text_str.find('/')
+    if first_slash_index != -1:
+        text_str = text_str[first_slash_index + 1:]
+
+    # Replace hyphens and underscores with spaces
+    text_str = text_str.replace('-', ' ').replace('_', ' ').replace(".lean", "")
+    
+    # Insert spaces for camelCase
+    # Handles: lowercase/digit followed by uppercase (e.g., "oneTwo" -> "one Two")
+    text_str = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', text_str)
+    # Handles: uppercase followed by another uppercase then lowercase (e.g., "HTMLFile" -> "HTML File")
+    text_str = re.sub(r'([A-Z])([A-Z][a-z])', r'\1 \2', text_str)
+    
+    # Add spaces around specified path delimiters
+    text_str = text_str.replace('/', ' ')
+    text_str = text_str.replace('.', ' ')
+    
+    # Normalize multiple spaces to a single space and strip leading/trailing whitespace
+    text_str = re.sub(r'\s+', ' ', text_str).strip()
+    text_str = text_str.lower()
+    return text_str
 
 
 def determine_lean_text(statement_group: StatementGroup) -> str:
@@ -198,23 +242,30 @@ def prepare_data(
 
                 # 2. Handle Informal Description Text
                 if not exclude_english:
-                    informal_text_content = ""
+                    final_informal_text = ""
                     if sg_obj.informal_description:
-                        informal_text_content = sg_obj.informal_description.strip()
-
-                    if informal_text_content:
+                        original_description = sg_obj.informal_description.strip()
+                        if original_description: # Only if actual description exists
+                            # sg_obj.source_file is non-nullable
+                            transformed_path = spacify_text(sg_obj.source_file)
+                            final_informal_text = (
+                                f"{original_description}\n"
+                                f"{transformed_path}"
+                            )
+                    
+                    if final_informal_text:
                         output_records.append(
                             {
                                 "id": f"sg_{sg_id}_informal",
                                 "source_statement_group_id": sg_id,
                                 "text_type": "informal_description",
-                                "text": informal_text_content,
+                                "text": final_informal_text,
                             }
                         )
                     else:
                         logger.debug(
                             "SG ID %d: No non-empty informal description found. "
-                            "Skipping entry.",
+                            "Skipping informal_description entry.",
                             sg_id,
                         )
                 elif exclude_english:
@@ -226,17 +277,24 @@ def prepare_data(
 
                 # 3. Handle Docstring Text
                 if not exclude_docstrings:
-                    docstring_text_content = ""
+                    final_docstring_text = ""
                     if sg_obj.docstring:
-                        docstring_text_content = sg_obj.docstring.strip()
-
-                    if docstring_text_content:
+                        original_docstring = sg_obj.docstring.strip()
+                        if original_docstring: # Only if actual docstring exists
+                            # sg_obj.source_file is non-nullable
+                            transformed_path = spacify_text(sg_obj.source_file)
+                            final_docstring_text = (
+                                f"{original_docstring}"
+                                # f"{transformed_path}"
+                            )
+                    
+                    if final_docstring_text:
                         output_records.append(
                             {
                                 "id": f"sg_{sg_id}_docstring",
                                 "source_statement_group_id": sg_id,
                                 "text_type": "docstring",
-                                "text": docstring_text_content,
+                                "text": final_docstring_text,
                             }
                         )
                     else:
@@ -257,18 +315,7 @@ def prepare_data(
                         sg_obj.primary_declaration
                         and sg_obj.primary_declaration.lean_name
                     ):
-                        path_part = sg_obj.source_file.strip()
-                        name_part = sg_obj.primary_declaration.lean_name.strip()
-                        
-                        if path_part and name_part:
-                            lean_name_content = f"{path_part}:{name_part}"
-                        else:
-                            logger.debug(
-                                "SG ID %d: Could not form combined 'path:name' for lean_name entry because "
-                                "either the source_file ('%s') or lean_name ('%s') from primary declaration "
-                                "was empty after stripping. Skipping entry.",
-                                sg_id, sg_obj.source_file, sg_obj.primary_declaration.lean_name
-                            )
+                        lean_name_content = sg_obj.primary_declaration.lean_name.strip()
 
                     if lean_name_content:
                         output_records.append(
@@ -281,8 +328,8 @@ def prepare_data(
                         )
                     else:
                         logger.debug(
-                            "SG ID %d: No valid text could be generated for lean_name "
-                            "(path:name) for primary declaration. Skipping entry.",
+                            "SG ID %d: No non-empty lean name found for primary "
+                            "declaration. Skipping entry.",
                             sg_id,
                         )
                 elif exclude_lean_names:
