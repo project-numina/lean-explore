@@ -40,9 +40,10 @@ except ImportError:
 # --- Configuration Constants ---
 SEARCH_RESULTS_FILE = "search_results.json"
 EVALUATION_OUTPUT_FILE = "evaluation_output.json"
-LLM_GENERATION_MODEL = "gemini-2.5-flash-preview-05-20" 
+LLM_GENERATION_MODEL = "gemini-2.5-flash-preview-05-20"
 MAX_RESULTS_TO_DISPLAY_PER_ENGINE = 5
 MAX_CONCURRENT_LLM_CALLS = 50
+MAX_LLM_PARSE_RETRIES = 2  # Number of retries after the initial attempt fails parsing
 
 SEARCH_ENGINE_KEYS = [
     "leansearch_results",
@@ -297,9 +298,9 @@ def construct_llm_prompt(
         "You are an expert search result evaluator. Your task is to analyze search "
         "results from three different search engines for a given query. "
         "These engines are presented as Engine A, Engine B, and Engine C. "
-        "You need to rank these three engines from best to worst based on the "
-        "relevance, accuracy, and comprehensiveness of their search results "
-        "for the provided query. If two or more engines are of comparable quality "
+        "You need to rank these three engines from best to worst based on "
+        "how accurate the search results are for the provided query. "
+        "If two or more engines are of comparable quality "
         "for a given rank, you can declare them as tied.\n\n"
         "First, provide your detailed reasoning for the ranking. "
         "After your reasoning, on a new and final line, provide your ranking. "
@@ -323,7 +324,7 @@ def construct_llm_prompt(
         actual_engine_name = engine_placeholders[placeholder]
         results_str = formatted_results[placeholder]
         user_prompt_parts.append(
-            f"\n----- {placeholder} ({actual_engine_name}) -----\n\n{results_str}\n"
+            f"\n----- {placeholder} -----\n\n{results_str}\n"
         )
 
     user_prompt_parts.append(
@@ -501,6 +502,9 @@ async def evaluate_single_query(
 ) -> Dict[str, Any]:
     """Evaluates search results for a single query using the LLM.
 
+    Implements a retry mechanism if the LLM response is received but
+    the ranking cannot be parsed.
+
     Args:
         query_data: Contains the query and its search results for all engines.
         engine_permutation: A tuple defining the order (Engine A, B, C)
@@ -547,74 +551,92 @@ async def evaluate_single_query(
     evaluation_entry["llm_system_prompt"] = system_prompt
     evaluation_entry["llm_user_prompt"] = user_prompt
 
-    try:
-        llm_response_text = await gemini_client.generate(
-            prompt=user_prompt,
-            system_prompt=system_prompt,
-            model=LLM_GENERATION_MODEL,
-        )
-        evaluation_entry["llm_raw_response"] = llm_response_text
+    for attempt in range(MAX_LLM_PARSE_RETRIES + 1):
+        evaluation_entry["llm_error"] = None
+        evaluation_entry["llm_raw_response"] = None
+        # evaluation_entry["llm_parsed_ranking"] is reset implicitly if parsing fails
 
-        if llm_response_text:
-            lines = llm_response_text.strip().split("\n")
-            ranking_line = ""
+        ranking_line_this_attempt = ""
 
-            if lines:
-                for line_idx in range(len(lines) - 1, -1, -1):
-                    current_line_stripped = lines[line_idx].strip()
-                    if current_line_stripped:
-                        ranking_line = current_line_stripped
-                        break
+        try:
+            llm_response_text = await gemini_client.generate(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                model=LLM_GENERATION_MODEL,
+            )
+            evaluation_entry["llm_raw_response"] = llm_response_text
 
-                if ranking_line:
+            if llm_response_text:
+                lines = llm_response_text.strip().split("\n")
+                if lines:
+                    for line_idx in range(len(lines) - 1, -1, -1):
+                        current_line_stripped = lines[line_idx].strip()
+                        if current_line_stripped:
+                            ranking_line_this_attempt = current_line_stripped
+                            break
+
+                if ranking_line_this_attempt:
                     parsed_ranking_result = parse_llm_ranking(
-                        ranking_line, current_placeholder_to_engine_map
+                        ranking_line_this_attempt, current_placeholder_to_engine_map
                     )
-                    evaluation_entry["llm_parsed_ranking"] = parsed_ranking_result
-                    if not parsed_ranking_result:
+                    if parsed_ranking_result:
+                        evaluation_entry["llm_parsed_ranking"] = parsed_ranking_result
+                        evaluation_entry["llm_error"] = None
+                        break  # Successful parse, exit retry loop
+                    else:
+                        evaluation_entry["llm_parsed_ranking"] = []
+                        evaluation_entry["llm_error"] = (
+                            f"LLM response's ranking line ('{ranking_line_this_attempt}') "
+                            "could not be parsed."
+                        )
                         print(
-                            f"Info: Parsing of ranking line '{ranking_line}' for query "
-                            f"'{query_string[:50]}...' resulted in an empty ranking. "
+                            f"Info: Parsing of ranking line '{ranking_line_this_attempt}' for query "
+                            f"'{query_string[:50]}...' (Attempt {attempt + 1}) resulted in an empty ranking. "
                             "Check warnings from parser."
                         )
-                else:
+                else:  # No ranking line extracted from non-empty response
                     evaluation_entry["llm_parsed_ranking"] = []
-                    non_empty_lines_exist = any(line.strip() for line in lines)
-                    if non_empty_lines_exist:
+                    if any(line.strip() for line in lines):
+                        evaluation_entry["llm_error"] = (
+                            "LLM response had content but no final ranking line was identified."
+                        )
                         print(
                             f"Warning: LLM response for query '{query_string[:50]}...' "
-                            "contained text but no clear ranking line was extracted."
+                            f"(Attempt {attempt + 1}) contained text but no "
+                            "clear ranking line was extracted."
                         )
-                        evaluation_entry["llm_error"] = (
-                            "LLM response had content but no final ranking line "
-                            "was identified."
+                    else: # Response became empty after strip
+                         evaluation_entry["llm_error"] = (
+                            "LLM returned an effectively empty response (e.g., only newlines)."
                         )
-
-            else:
+            else:  # LLM returned None or empty string
                 evaluation_entry["llm_parsed_ranking"] = []
                 evaluation_entry["llm_error"] = (
-                    "LLM returned an empty response after stripping newlines."
+                    "LLM returned no response text (None or empty string)."
                 )
-        else:
+
+        except Exception as e:
+            print(f"Error during LLM call for query '{query_string[:50]}...' (Attempt {attempt + 1}): {e}")
+            evaluation_entry["llm_error"] = str(e)
             evaluation_entry["llm_parsed_ranking"] = []
-            evaluation_entry["llm_error"] = (
-                "LLM returned no response text (None or empty string)."
-            )
+            # llm_raw_response may be None or from a partial failure
 
-        if (
-            not evaluation_entry["llm_parsed_ranking"]
-            and not evaluation_entry["llm_error"]
-            and llm_response_text
-        ):
-            if not ranking_line:
-                evaluation_entry["llm_error"] = (
-                    "LLM response was non-empty but contained no parsable ranking line."
+        if not evaluation_entry["llm_parsed_ranking"]:  # If not successful this attempt
+            if attempt < MAX_LLM_PARSE_RETRIES:
+                print(
+                    f"Warning: Attempt {attempt + 1}/{MAX_LLM_PARSE_RETRIES + 1} for query "
+                    f"'{query_string[:50]}...' failed. Error: {evaluation_entry['llm_error']}. Retrying..."
                 )
-
-    except Exception as e:
-        print(f"Error during LLM call for query '{query_string[:50]}...': {e}")
-        evaluation_entry["llm_error"] = str(e)
-        evaluation_entry["llm_parsed_ranking"] = []
+                await asyncio.sleep(1 + attempt)  # Small, increasing delay
+            else:  # Last attempt failed
+                print(
+                    f"Error: Failed to get a valid, parsable ranking for query "
+                    f"'{query_string[:50]}...' after {MAX_LLM_PARSE_RETRIES + 1} attempts. "
+                    f"Last error: {evaluation_entry['llm_error']}"
+                )
+                # Error and raw_response from the last attempt are already in evaluation_entry
+        else: # Successfully parsed in this attempt
+            pass # Loop will break due to the 'break' statement earlier
 
     return evaluation_entry
 

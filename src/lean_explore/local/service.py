@@ -52,6 +52,7 @@ class Service:
         default_faiss_k (int): Default number of FAISS neighbors to retrieve.
         default_pagerank_weight (float): Default weight for PageRank.
         default_text_relevance_weight (float): Default weight for text relevance.
+        default_name_match_weight (float): Default weight for name matching (BM25).
         default_semantic_similarity_threshold (float): Default similarity threshold.
         default_results_limit (int): Default limit for search results.
         default_faiss_nprobe (int): Default nprobe for FAISS IVF indexes.
@@ -136,9 +137,8 @@ class Service:
             # Test connection
             with (
                 self.engine.connect()
-            ):  # Ensure connect is within try for OperationalError
+            ):
                 logger.info("Database connection successful.")
-            # Setup SessionLocal after successful connection test
             self.SessionLocal: sessionmaker[SQLAlchemySessionType] = sessionmaker(
                 autocommit=False, autoflush=False, bind=self.engine
             )
@@ -173,6 +173,7 @@ class Service:
         self.default_text_relevance_weight: float = (
             defaults.DEFAULT_TEXT_RELEVANCE_WEIGHT
         )
+        self.default_name_match_weight: float = defaults.DEFAULT_NAME_MATCH_WEIGHT
         self.default_semantic_similarity_threshold: float = (
             defaults.DEFAULT_SEM_SIM_THRESHOLD
         )
@@ -254,6 +255,7 @@ class Service:
                     faiss_k=self.default_faiss_k,
                     pagerank_weight=self.default_pagerank_weight,
                     text_relevance_weight=self.default_text_relevance_weight,
+                    name_match_weight=self.default_name_match_weight,
                     log_searches=True,
                     selected_packages=package_filters,
                     semantic_similarity_threshold=(
@@ -261,12 +263,10 @@ class Service:
                     ),
                     faiss_nprobe=self.default_faiss_nprobe,
                 )
-            except Exception as e:  # Catch exceptions from perform_search
+            except Exception as e:
                 logger.error(
                     f"Error during perform_search execution: {e}", exc_info=True
                 )
-                # Re-raise to allow higher-level error handling if needed by the caller
-                # (e.g., MCP server might want to return a specific error response)
                 raise
 
         api_results = [
@@ -283,7 +283,7 @@ class Service:
             packages_applied=package_filters,
             results=final_results,
             count=len(final_results),
-            total_candidates_considered=len(api_results),  # Number before final limit
+            total_candidates_considered=len(api_results),
             processing_time_ms=processing_time_ms,
         )
 
@@ -337,7 +337,6 @@ class Service:
         """
         with self.SessionLocal() as session:
             try:
-                # Check if the source statement group exists
                 source_group_exists = (
                     session.query(StatementGroup.id)
                     .filter(StatementGroup.id == group_id)
@@ -350,7 +349,6 @@ class Service:
                     )
                     return None
 
-                # Query for statement groups that `group_id` depends on (citations)
                 cited_target_groups_orm = (
                     session.query(StatementGroup)
                     .join(

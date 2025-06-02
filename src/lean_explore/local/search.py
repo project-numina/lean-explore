@@ -2,13 +2,15 @@
 
 """Performs semantic search and ranked retrieval of StatementGroups.
 
-Combines semantic similarity from FAISS and pre-scaled PageRank scores
+Combines semantic similarity from FAISS, pre-scaled PageRank scores, and
+lexical word matching (on Lean name, docstring, and informal descriptions)
 to rank StatementGroups. It loads necessary assets (embedding model,
 FAISS index, ID map) using default configurations, embeds the user query,
 performs FAISS search, filters based on a similarity threshold,
-retrieves group details from the database, normalizes semantic similarity scores,
-and then combines these scores using configurable weights to produce a final
-ranked list. It also logs search performance statistics to a dedicated
+retrieves group details from the database, normalizes semantic similarity,
+PageRank, and BM25 scores based on the current candidate set, and then
+combines these normalized scores using configurable weights to produce a
+final ranked list. It also logs search performance statistics to a dedicated
 JSONL file.
 """
 
@@ -18,6 +20,7 @@ import json
 import logging
 import os
 import pathlib
+import re # For tokenization
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -32,12 +35,14 @@ try:
     from sqlalchemy import create_engine, or_, select
     from sqlalchemy.exc import OperationalError, SQLAlchemyError
     from sqlalchemy.orm import Session, joinedload, sessionmaker
+    from nltk.stem.porter import PorterStemmer
+    from rank_bm25 import BM25Plus
 except ImportError as e:
     # pylint: disable=broad-exception-raised
     print(
         f"Error: Missing required libraries ({e}).\n"
         "Please install them: pip install SQLAlchemy faiss-cpu "
-        "sentence-transformers numpy filelock rapidfuzz",
+        "sentence-transformers numpy filelock rapidfuzz rank_bm25 nltk",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -70,14 +75,8 @@ logger = logging.getLogger(__name__)
 # --- Constants ---
 NEWLINE = os.linesep
 EPSILON = 1e-9
-# PROJECT_ROOT might be less relevant for asset paths if defaults.py
-# provides absolute paths
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# --- Performance Logging Path Setup ---
-# Logs will be stored in a user-writable directory, e.g., ~/.lean_explore/logs/
-# defaults.LEAN_EXPLORE_USER_DATA_DIR is ~/.lean_explore/data/
-# So, its parent is ~/.lean_explore/
 _USER_LOGS_BASE_DIR = defaults.LEAN_EXPLORE_USER_DATA_DIR.parent / "logs"
 PERFORMANCE_LOG_DIR = str(_USER_LOGS_BASE_DIR)
 PERFORMANCE_LOG_FILENAME = "search_stats.jsonl"
@@ -115,15 +114,13 @@ def log_search_event_to_json(
     try:
         os.makedirs(PERFORMANCE_LOG_DIR, exist_ok=True)
     except OSError as e:
-        # This error is critical for logging but should not stop main search flow.
-        # The fallback print helps retain info if file logging fails.
         logger.error(
             "Performance logging error: Could not create log directory %s: %s. "
             "Log entry: %s",
             PERFORMANCE_LOG_DIR,
             e,
             log_entry,
-            exc_info=False,  # Keep exc_info False to avoid spamming user console
+            exc_info=False,
         )
         print(
             f"FALLBACK_PERF_LOG (DIR_ERROR): {json.dumps(log_entry)}", file=sys.stderr
@@ -147,7 +144,7 @@ def log_search_event_to_json(
             file=sys.stderr,
         )
     except Exception as e:
-        logger.error(  # Keep as error for unexpected write issues
+        logger.error(
             "Performance logging error: Failed to write to %s: %s. Log entry: %s",
             PERFORMANCE_LOG_PATH,
             e,
@@ -197,7 +194,7 @@ def load_faiss_assets(
         logger.error(
             "Failed to load FAISS index from %s: %s", index_path, e, exc_info=True
         )
-        return None, id_map_list  # Return None for index if loading failed
+        return None, id_map_list
 
     try:
         logger.info("Loading ID map from %s...", map_path)
@@ -207,13 +204,13 @@ def load_faiss_assets(
             logger.error(
                 "ID map file (%s) does not contain a valid JSON list.", map_path
             )
-            return faiss_index_obj, None  # Return None for map if parsing failed
+            return faiss_index_obj, None
         logger.info("Loaded ID map with %d entries.", len(id_map_list))
     except Exception as e:
         logger.error(
             "Failed to load or parse ID map file %s: %s", map_path, e, exc_info=True
         )
-        return faiss_index_obj, None  # Return None for map if loading/parsing failed
+        return faiss_index_obj, None
 
     if (
         faiss_index_obj is not None
@@ -247,7 +244,7 @@ def load_embedding_model(model_name: str) -> Optional[SentenceTransformer]:
             model.max_seq_length,
         )
         return model
-    except Exception as e:  # Broad exception for any model loading issue
+    except Exception as e:
         logger.error(
             "Failed to load sentence transformer model '%s': %s",
             model_name,
@@ -269,12 +266,17 @@ def perform_search(
     faiss_k: int,
     pagerank_weight: float,
     text_relevance_weight: float,
-    log_searches: bool,  # Added parameter
+    log_searches: bool,
+    name_match_weight: float = defaults.DEFAULT_NAME_MATCH_WEIGHT,
     selected_packages: Optional[List[str]] = None,
     semantic_similarity_threshold: float = defaults.DEFAULT_SEM_SIM_THRESHOLD,
     faiss_nprobe: int = defaults.DEFAULT_FAISS_NPROBE,
 ) -> List[Tuple[StatementGroup, Dict[str, float]]]:
-    """Performs semantic search and ranking.
+    """Performs semantic and lexical search, then ranks results.
+
+    Scores (semantic similarity, PageRank, BM25) are normalized to a 0-1
+    range based on the current set of candidates before being weighted and
+    combined.
 
     Args:
         session: SQLAlchemy session for database access.
@@ -283,17 +285,35 @@ def perform_search(
         faiss_index: The loaded FAISS index for text chunks.
         text_chunk_id_map: A list mapping FAISS internal indices to text chunk IDs.
         faiss_k: The number of nearest neighbors to retrieve from FAISS.
-        pagerank_weight: Weight for the pre-scaled PageRank score.
-        text_relevance_weight: Weight for the normalized semantic similarity score.
+        pagerank_weight: Weight for the PageRank score.
+        text_relevance_weight: Weight for the semantic similarity score.
         log_searches: If True, search performance data will be logged.
+        name_match_weight: Weight for the lexical word match score (BM25).
+            Defaults to `defaults.DEFAULT_NAME_MATCH_WEIGHT`.
         selected_packages: Optional list of package names to filter search by.
-        semantic_similarity_threshold: Minimum similarity for a result to be considered.
-        faiss_nprobe: Number of closest cells/clusters to search for IVF-type FAISS
-            indexes.
+            Defaults to None.
+        semantic_similarity_threshold: Minimum similarity for a result to be
+            considered. Defaults to `defaults.DEFAULT_SEM_SIM_THRESHOLD`.
+        faiss_nprobe: Number of closest cells/clusters to search for IVF-type
+            FAISS indexes. Defaults to `defaults.DEFAULT_FAISS_NPROBE`.
 
     Returns:
-        A list of tuples, sorted by final_score, containing a
-        `StatementGroup` object and its scores.
+        A list of tuples, sorted by `final_score`. Each tuple contains a
+        `StatementGroup` object and a dictionary of its scores.
+        The score dictionary includes:
+        - 'final_score': The combined weighted score.
+        - 'raw_similarity': Original FAISS similarity (0-1).
+        - 'norm_similarity': `raw_similarity` normalized across current results.
+        - 'original_pagerank_score': PageRank score from the database.
+        - 'scaled_pagerank': `original_pagerank_score` normalized across current
+                             results (this key is kept for compatibility, but
+                             now holds the normalized PageRank).
+        - 'raw_word_match_score': Original BM25 score.
+        - 'norm_word_match_score': `raw_word_match_score` normalized across
+                                   current results.
+        - Weighted components: `weighted_norm_similarity`,
+          `weighted_scaled_pagerank` (uses normalized PageRank),
+          `weighted_word_match_score` (uses normalized BM25 score).
 
     Raises:
         Exception: If critical errors like query embedding or FAISS search fail.
@@ -342,13 +362,11 @@ def perform_search(
         logger.debug(
             "Searching FAISS index for top %d text chunk neighbors...", faiss_k
         )
-        if hasattr(faiss_index, "nprobe") and isinstance(
-            faiss_index.nprobe, int
-        ):  # Check if index is IVF
+        if hasattr(faiss_index, "nprobe") and isinstance(faiss_index.nprobe, int):
             if faiss_nprobe > 0:
                 faiss_index.nprobe = faiss_nprobe
                 logger.debug(f"Set FAISS nprobe to: {faiss_index.nprobe}")
-            else:  # faiss_nprobe from config is invalid
+            else:
                 logger.warning(
                     f"Configured faiss_nprobe is {faiss_nprobe}. Must be > 0. "
                     "Using FAISS default or previously set nprobe for this IVF index."
@@ -369,7 +387,7 @@ def perform_search(
     sg_candidates_raw_similarity: Dict[int, float] = {}
     if indices.size > 0 and distances.size > 0:
         for i, faiss_internal_idx in enumerate(indices[0]):
-            if faiss_internal_idx == -1:  # FAISS can return -1 for no neighbor
+            if faiss_internal_idx == -1:
                 continue
             try:
                 text_chunk_id_str = text_chunk_id_map[faiss_internal_idx]
@@ -379,25 +397,20 @@ def perform_search(
                 if faiss_index.metric_type == faiss.METRIC_L2:
                     similarity_score = 1.0 / (1.0 + np.sqrt(max(0, raw_faiss_score)))
                 elif faiss_index.metric_type == faiss.METRIC_INNER_PRODUCT:
-                    # Assuming normalized vectors, inner product is cosine similarity
                     similarity_score = raw_faiss_score
-                else:  # Default or unknown metric, treat score as distance-like
+                else:
                     similarity_score = 1.0 / (1.0 + max(0, raw_faiss_score))
                     logger.warning(
                         "Unhandled FAISS metric type %d for text chunk. "
                         "Using 1/(1+score) for similarity.",
                         faiss_index.metric_type,
                     )
-                similarity_score = max(
-                    0.0, min(1.0, similarity_score)
-                )  # Clamp to [0,1]
+                similarity_score = max(0.0, min(1.0, similarity_score))
 
                 parts = text_chunk_id_str.split("_")
                 if len(parts) >= 2 and parts[0] == "sg":
                     try:
                         sg_id = int(parts[1])
-                        # If multiple chunks from the same StatementGroup are retrieved,
-                        # keep the one with the highest similarity to the query.
                         if (
                             sg_id not in sg_candidates_raw_similarity
                             or similarity_score > sg_candidates_raw_similarity[sg_id]
@@ -419,9 +432,7 @@ def perform_search(
                     faiss_internal_idx,
                     len(text_chunk_id_map),
                 )
-            except (
-                Exception
-            ) as e:  # Catch any other unexpected errors during result processing
+            except Exception as e:
                 logger.warning(
                     "Error processing FAISS result for internal index %d "
                     "(chunk_id '%s'): %s",
@@ -486,21 +497,15 @@ def perform_search(
         if selected_packages:
             logger.info("Filtering search by packages: %s", selected_packages)
             package_filters_sqla = []
-            # Assuming package names in selected_packages are like "Mathlib", "Std"
-            # And source_file in DB is like
-            # "Mathlib/CategoryTheory/Adjunction/Basic.lean"
             for pkg_name in selected_packages:
-                # Ensure exact package match at the start of the file path
-                # component
-                package_filters_sqla.append(
-                    StatementGroup.source_file.startswith(pkg_name + "/")
-                )
+                if pkg_name.strip(): # Ensure package name is not empty
+                    package_filters_sqla.append(
+                        StatementGroup.source_file.startswith(pkg_name.strip() + "/")
+                    )
 
             if package_filters_sqla:
                 stmt = stmt.where(or_(*package_filters_sqla))
 
-        # Eagerly load primary_declaration to avoid N+1 queries later if
-        # accessing lean_name
         stmt = stmt.options(joinedload(StatementGroup.primary_declaration))
         db_results = session.execute(stmt).scalars().unique().all()
         for sg_obj in db_results:
@@ -510,9 +515,6 @@ def perform_search(
             "Fetched details for %d StatementGroups from DB that matched filters.",
             len(sg_objects_map),
         )
-        # Log if some IDs from FAISS (post-threshold and package filter if
-        # applied) were not found in DB. This check is more informative if
-        # done *after* any package filtering logic in the query
         final_candidate_ids_after_db_match = set(sg_objects_map.keys())
         original_faiss_candidate_ids = set(candidate_sg_ids)
 
@@ -539,28 +541,32 @@ def perform_search(
                 results_count=0,
                 error_type=type(e).__name__,
             )
-        raise  # Re-raise to be handled by the caller
+        raise
 
     results_with_scores: List[Tuple[StatementGroup, Dict[str, float]]] = []
-    candidate_semantic_similarities: List[float] = []  # For normalization range
-    processed_candidates_data: List[
-        Dict[str, Any]
-    ] = []  # Temp store for data to be scored
+    # Prepare lists for normalization
+    candidate_semantic_similarities: List[float] = []
+    candidate_pagerank_scores: List[float] = []
+    # BM25 scores will be populated later, then normalized
 
-    # Iterate over IDs that were confirmed to exist in the DB and match filters
-    for sg_id in final_candidate_ids_after_db_match:  # Use keys from sg_objects_map
-        sg_obj = sg_objects_map[sg_id]  # We know this exists
-        raw_sem_sim = sg_candidates_raw_similarity[
-            sg_id
-        ]  # This ID came from FAISS initially
+    processed_candidates_data: List[Dict[str, Any]] = []
+
+    for sg_id in final_candidate_ids_after_db_match: # Use IDs that are confirmed in DB
+        sg_obj = sg_objects_map[sg_id]
+        raw_sem_sim = sg_candidates_raw_similarity[sg_id] # sg_id is guaranteed to be in this dict
 
         processed_candidates_data.append(
             {
                 "sg_obj": sg_obj,
                 "raw_sem_sim": raw_sem_sim,
+                "original_pagerank": sg_obj.scaled_pagerank_score if sg_obj.scaled_pagerank_score is not None else 0.0
             }
         )
         candidate_semantic_similarities.append(raw_sem_sim)
+        candidate_pagerank_scores.append(
+            sg_obj.scaled_pagerank_score if sg_obj.scaled_pagerank_score is not None else 0.0
+        )
+
 
     if not processed_candidates_data:
         logger.info(
@@ -576,58 +582,121 @@ def perform_search(
             )
         return []
 
-    # Normalize semantic similarity scores for the retrieved candidates
-    min_sem_sim = (
-        min(candidate_semantic_similarities) if candidate_semantic_similarities else 0.0
-    )
-    max_sem_sim = (
-        max(candidate_semantic_similarities) if candidate_semantic_similarities else 0.0
-    )
-    range_sem_sim = max_sem_sim - min_sem_sim
-    logger.debug(
-        "Raw semantic similarity range for normalization: [%.4f, %.4f]",
-        min_sem_sim,
-        max_sem_sim,
-    )
+    # --- BM25 Lexical Scoring ---
+    stemmer = PorterStemmer()
+    def _get_tokenized_list(text_to_tokenize: str) -> List[str]:
+        if not text_to_tokenize:
+            return []
+        tokens = re.findall(r"\w+", text_to_tokenize.lower())
+        return [stemmer.stem(token) for token in tokens]
 
-    for candidate_data in processed_candidates_data:
+    tokenized_query = _get_tokenized_list(query_string.strip())
+    bm25_corpus: List[List[str]] = []
+    for candidate_item_data in processed_candidates_data:
+        sg_obj_for_corpus = candidate_item_data["sg_obj"]
+        combined_text_for_bm25 = " ".join(
+            filter(None, [
+                (sg_obj_for_corpus.primary_declaration.lean_name
+                 if sg_obj_for_corpus.primary_declaration else None),
+                sg_obj_for_corpus.docstring,
+                sg_obj_for_corpus.informal_summary,
+                sg_obj_for_corpus.informal_description
+            ])
+        )
+        bm25_corpus.append(_get_tokenized_list(combined_text_for_bm25))
+
+    raw_bm25_scores_list: List[float] = [0.0] * len(processed_candidates_data)
+    if tokenized_query and any(bm25_corpus):
+        try:
+            bm25_model = BM25Plus(bm25_corpus)
+            raw_bm25_scores_list = bm25_model.get_scores(tokenized_query)
+            # Ensure scores are float and non-negative
+            raw_bm25_scores_list = [max(0.0, float(score)) for score in raw_bm25_scores_list]
+        except Exception as e:
+            logger.warning(
+                "BM25Plus scoring failed: %s. Word match scores defaulted to 0.", e, exc_info=False
+            )
+            raw_bm25_scores_list = [0.0] * len(processed_candidates_data) # Ensure correct length on failure
+
+
+    # --- Score Normalization Setup ---
+    # Semantic Similarity
+    min_sem_sim = min(candidate_semantic_similarities) if candidate_semantic_similarities else 0.0
+    max_sem_sim = max(candidate_semantic_similarities) if candidate_semantic_similarities else 0.0
+    range_sem_sim = max_sem_sim - min_sem_sim
+    logger.debug("Raw semantic similarity range for normalization: [%.4f, %.4f]", min_sem_sim, max_sem_sim)
+
+    # PageRank
+    min_pr = min(candidate_pagerank_scores) if candidate_pagerank_scores else 0.0
+    max_pr = max(candidate_pagerank_scores) if candidate_pagerank_scores else 0.0
+    range_pr = max_pr - min_pr
+    logger.debug("Original PageRank score range for normalization: [%.4f, %.4f]", min_pr, max_pr)
+
+    # BM25
+    min_bm25 = min(raw_bm25_scores_list) if raw_bm25_scores_list else 0.0
+    max_bm25 = max(raw_bm25_scores_list) if raw_bm25_scores_list else 0.0
+    range_bm25 = max_bm25 - min_bm25
+    logger.debug("Raw BM25 score range for normalization: [%.4f, %.4f]", min_bm25, max_bm25)
+
+
+    # --- Scoring Loop for each candidate ---
+    for i, candidate_data in enumerate(processed_candidates_data):
         sg_obj = candidate_data["sg_obj"]
         current_raw_sem_sim = candidate_data["raw_sem_sim"]
+        original_pagerank_score = candidate_data["original_pagerank"]
+        original_bm25_score = raw_bm25_scores_list[i]
 
-        # Normalize semantic similarity: scale to [0,1]
-        norm_sem_sim = 0.5  # Default if range is zero (e.g., only one candidate)
-        if range_sem_sim > EPSILON:
-            norm_sem_sim = (current_raw_sem_sim - min_sem_sim) / range_sem_sim
-        elif (
-            len(candidate_semantic_similarities) == 1
-            and candidate_semantic_similarities[0] > 0
-        ):  # Single candidate
-            # If only one candidate, its normalized score should be high if
-            # its raw score is non-zero.
-            norm_sem_sim = 1.0
-        elif (
-            len(candidate_semantic_similarities) == 0
-        ):  # Should not happen given previous check
+        # 1. Normalize Semantic Similarity (maintaining current file's logic style + clamping)
+        norm_sem_sim = 0.5
+        if candidate_semantic_similarities: # Check if list is not empty
+            if range_sem_sim > EPSILON:
+                norm_sem_sim = (current_raw_sem_sim - min_sem_sim) / range_sem_sim
+            elif len(candidate_semantic_similarities) == 1 and candidate_semantic_similarities[0] > EPSILON:
+                norm_sem_sim = 1.0
+            elif len(candidate_semantic_similarities) > 0 and range_sem_sim <= EPSILON and max_sem_sim <= EPSILON: # All zeros
+                 norm_sem_sim = 0.0
+        else: # Should not happen if processed_candidates_data is not empty
             norm_sem_sim = 0.0
+        norm_sem_sim = max(0.0, min(1.0, norm_sem_sim))
 
-        current_scaled_pagerank = (
-            sg_obj.scaled_pagerank_score
-            if sg_obj.scaled_pagerank_score is not None
-            else 0.0
-        )
+        # 2. Normalize PageRank Score
+        norm_pagerank_score = 0.0
+        if candidate_pagerank_scores: # Check if list is not empty
+            if range_pr > EPSILON:
+                norm_pagerank_score = (original_pagerank_score - min_pr) / range_pr
+            elif max_pr > EPSILON: # Single item or all items have same positive score
+                norm_pagerank_score = 1.0
+            # else: all scores are 0, norm_pagerank_score remains 0.0
+        norm_pagerank_score = max(0.0, min(1.0, norm_pagerank_score))
 
-        # Combine scores using weights
+        # 3. Normalize BM25 Score
+        norm_bm25_score = 0.0
+        if raw_bm25_scores_list: # Check if list is not empty
+            if range_bm25 > EPSILON:
+                norm_bm25_score = (original_bm25_score - min_bm25) / range_bm25
+            elif max_bm25 > EPSILON: # Single item or all items have same positive score
+                norm_bm25_score = 1.0
+            # else: all scores are 0, norm_bm25_score remains 0.0
+        norm_bm25_score = max(0.0, min(1.0, norm_bm25_score))
+
+        # Weighted scores using normalized components
         weighted_norm_similarity = text_relevance_weight * norm_sem_sim
-        weighted_scaled_pagerank = pagerank_weight * current_scaled_pagerank
-        final_score = weighted_norm_similarity + weighted_scaled_pagerank
+        weighted_norm_pagerank = pagerank_weight * norm_pagerank_score
+        weighted_norm_bm25_score = name_match_weight * norm_bm25_score
+
+        final_score = weighted_norm_similarity + weighted_norm_pagerank + weighted_norm_bm25_score
 
         score_dict = {
             "final_score": final_score,
+            "raw_similarity": current_raw_sem_sim,
             "norm_similarity": norm_sem_sim,
-            "scaled_pagerank": current_scaled_pagerank,
+            "original_pagerank_score": original_pagerank_score,
+            "scaled_pagerank": norm_pagerank_score, # Key retained for compatibility, value is normalized
+            "raw_word_match_score": original_bm25_score, # Original BM25
+            "norm_word_match_score": norm_bm25_score,    # Normalized BM25
             "weighted_norm_similarity": weighted_norm_similarity,
-            "weighted_scaled_pagerank": weighted_scaled_pagerank,
-            "raw_similarity": current_raw_sem_sim,  # Keep raw similarity for inspection
+            "weighted_scaled_pagerank": weighted_norm_pagerank, # Key retained, uses normalized PR
+            "weighted_word_match_score": weighted_norm_bm25_score, # Key retained, uses normalized BM25
         }
         results_with_scores.append((sg_obj, score_dict))
 
@@ -635,18 +704,14 @@ def perform_search(
 
     final_status = "SUCCESS"
     results_count = len(results_with_scores)
-    if (
-        not results_with_scores and processed_candidates_data
-    ):  # Had candidates, but scoring/sorting yielded none (unlikely)
+    if not results_with_scores and processed_candidates_data:
         final_status = "NO_RESULTS_FINAL_SCORED"
-    elif (
-        not results_with_scores and not processed_candidates_data
-    ):  # No candidates from the start essentially
-        # This case should have been caught earlier, but as a safeguard for logging
-        if not candidate_sg_ids:
-            final_status = "NO_FAISS_CANDIDATES"
-        elif not sg_candidates_raw_similarity:
-            final_status = "NO_CANDIDATES_POST_THRESHOLD"
+    elif not results_with_scores and not processed_candidates_data:
+        # This block might need review based on earlier status logging points
+        # For now, ensure a status if truly no results by this stage
+        if not sg_candidates_raw_similarity: # Checks after FAISS and initial thresholding
+             final_status = "NO_CANDIDATES_POST_THRESHOLD" # Or NO_FAISS_CANDIDATES if that was the case
+        # else: Handled by NO_CANDIDATES_POST_PROCESSING if that was logged
 
     if log_searches:
         duration_ms = (time.time() - overall_start_time) * 1000
@@ -682,12 +747,13 @@ def print_results(results: List[Tuple[StatementGroup, Dict[str, float]]]) -> Non
             f"\n{i + 1}. Lean Name: {primary_decl_name} (SG ID: {sg_obj.id})\n"
             f"   Final Score: {scores['final_score']:.4f} ("
             f"NormSim*W: {scores['weighted_norm_similarity']:.4f}, "
-            f"ScaledPR*W: {scores['weighted_scaled_pagerank']:.4f})"
+            f"NormPR*W: {scores['weighted_scaled_pagerank']:.4f}, " # Uses normalized PR
+            f"NormWordMatch*W: {scores['weighted_word_match_score']:.4f})" # Uses normalized BM25
         )
         print(
-            f"   Scores: [NormSim: {scores['norm_similarity']:.4f}, "
-            f"ScaledPR: {scores['scaled_pagerank']:.4f}, "
-            f"RawSim: {scores['raw_similarity']:.4f}]"
+            f"   Scores: [NormSim: {scores['norm_similarity']:.4f} (Raw: {scores['raw_similarity']:.4f}), "
+            f"NormPR: {scores['scaled_pagerank']:.4f} (Original: {scores['original_pagerank_score']:.4f}), "
+            f"NormWordMatch: {scores['norm_word_match_score']:.4f} (OriginalBM25: {scores['raw_word_match_score']:.2f})]"
         )
 
         lean_display = (
@@ -707,7 +773,7 @@ def print_results(results: List[Tuple[StatementGroup, Dict[str, float]]]) -> Non
         print(f"   Description: {desc_display_short.replace(NEWLINE, ' ')}")
 
         source_loc = sg_obj.source_file or "[No source file]"
-        if source_loc.startswith("Mathlib/"):  # Simplify Mathlib paths
+        if source_loc.startswith("Mathlib/"):
             source_loc = source_loc[len("Mathlib/") :]
         print(f"   File: {source_loc}:{sg_obj.range_start_line}")
 
@@ -732,15 +798,15 @@ def parse_arguments() -> argparse.Namespace:
         "--limit",
         "-n",
         type=int,
-        default=None,  # Will use DEFAULT_RESULTS_LIMIT from defaults if None
+        default=None,
         help="Maximum number of final results to display. Overrides default if set.",
     )
     parser.add_argument(
         "--packages",
         metavar="PKG",
         type=str,
-        nargs="*",  # Allows zero or more package names
-        default=None,  # No filter if not provided
+        nargs="*",
+        default=None,
         help="Filter search results by specific package names (e.g., Mathlib Std). "
         "If not provided, searches all packages.",
     )
@@ -756,25 +822,25 @@ def main():
         "lean_explore.defaults."
     )
 
-    # These now point to the versioned paths, e.g., .../toolchains/0.1.0/file.db
-    db_url = defaults.DEFAULT_DB_URL
-    embedding_model_name = defaults.DEFAULT_EMBEDDING_MODEL_NAME
-    resolved_idx_path = str(defaults.DEFAULT_FAISS_INDEX_PATH.resolve())
-    resolved_map_path = str(defaults.DEFAULT_FAISS_MAP_PATH.resolve())
+    db_url = defaults.DEFAULT_DB_URL # type: ignore
+    embedding_model_name = defaults.DEFAULT_EMBEDDING_MODEL_NAME # type: ignore
+    resolved_idx_path = str(defaults.DEFAULT_FAISS_INDEX_PATH.resolve()) # type: ignore
+    resolved_map_path = str(defaults.DEFAULT_FAISS_MAP_PATH.resolve()) # type: ignore
 
-    faiss_k_cand = defaults.DEFAULT_FAISS_K
-    pr_weight = defaults.DEFAULT_PAGERANK_WEIGHT
-    sem_sim_weight = defaults.DEFAULT_TEXT_RELEVANCE_WEIGHT
+    faiss_k_cand = defaults.DEFAULT_FAISS_K # type: ignore
+    pr_weight = defaults.DEFAULT_PAGERANK_WEIGHT # type: ignore
+    sem_sim_weight = defaults.DEFAULT_TEXT_RELEVANCE_WEIGHT # type: ignore
+    name_match_w = defaults.DEFAULT_NAME_MATCH_WEIGHT # type: ignore
     results_disp_limit = (
-        args.limit if args.limit is not None else defaults.DEFAULT_RESULTS_LIMIT
+        args.limit if args.limit is not None else defaults.DEFAULT_RESULTS_LIMIT # type: ignore
     )
-    semantic_sim_thresh = defaults.DEFAULT_SEM_SIM_THRESHOLD
-    faiss_nprobe_val = defaults.DEFAULT_FAISS_NPROBE
+    semantic_sim_thresh = defaults.DEFAULT_SEM_SIM_THRESHOLD # type: ignore
+    faiss_nprobe_val = defaults.DEFAULT_FAISS_NPROBE # type: ignore
 
     db_url_display = (
-        f"...{str(defaults.DEFAULT_DB_PATH.resolve())[-30:]}"
-        if len(str(defaults.DEFAULT_DB_PATH.resolve())) > 30
-        else str(defaults.DEFAULT_DB_PATH.resolve())
+        f"...{str(defaults.DEFAULT_DB_PATH.resolve())[-30:]}" # type: ignore
+        if len(str(defaults.DEFAULT_DB_PATH.resolve())) > 30 # type: ignore
+        else str(defaults.DEFAULT_DB_PATH.resolve()) # type: ignore
     )
     logger.info("--- Starting Search (Direct Script Execution) ---")
     logger.info("Query: '%s'", args.query)
@@ -789,19 +855,15 @@ def main():
         "Semantic Similarity Threshold (from defaults): %.3f", semantic_sim_thresh
     )
     logger.info(
-        "Weights -> NormTextSim: %.2f, ScaledPR: %.2f",
+        "Weights -> NormTextSim: %.2f, NormPR: %.2f, NormWordMatch (BM25): %.2f",
         sem_sim_weight,
         pr_weight,
+        name_match_w,
     )
     logger.info("Using FAISS index: %s", resolved_idx_path)
     logger.info("Using ID map: %s", resolved_map_path)
-    logger.info(
-        "Database path: %s", db_url_display
-    )  # Changed from URL for clarity with file paths
+    logger.info("Database path: %s", db_url_display)
 
-    # Ensure user data directory and toolchain directory exist for logs etc.
-    # The fetch command handles creation of the specific toolchain version dir.
-    # Here, we ensure the base log directory can be created by performance logger.
     try:
         _USER_LOGS_BASE_DIR.mkdir(parents=True, exist_ok=True)
     except OSError as e:
@@ -811,10 +873,8 @@ def main():
 
     engine = None
     try:
-        # Asset loading with improved error potential
         s_transformer_model = load_embedding_model(embedding_model_name)
         if s_transformer_model is None:
-            # load_embedding_model already logs the error
             logger.error(
                 "Sentence transformer model loading failed. Cannot proceed with search."
             )
@@ -822,7 +882,6 @@ def main():
 
         faiss_idx, id_map = load_faiss_assets(resolved_idx_path, resolved_map_path)
         if faiss_idx is None or id_map is None:
-            # load_faiss_assets already logs details
             logger.error(
                 "Failed to load critical FAISS assets (index or ID map).\n"
                 f"Expected at:\n  Index path: {resolved_idx_path}\n"
@@ -832,13 +891,9 @@ def main():
             )
             sys.exit(1)
 
-        # Database connection
-        # Check for DB file existence before creating engine if it's a
-        # file-based SQLite DB
         is_file_db = db_url.startswith("sqlite:///")
         db_file_path = None
         if is_file_db:
-            # Extract file path from sqlite:/// URL
             db_file_path_str = db_url[len("sqlite///") :]
             db_file_path = pathlib.Path(db_file_path_str)
             if not db_file_path.exists():
@@ -864,14 +919,15 @@ def main():
                 pagerank_weight=pr_weight,
                 text_relevance_weight=sem_sim_weight,
                 log_searches=True,
+                name_match_weight=name_match_w,
                 selected_packages=args.packages,
-                semantic_similarity_threshold=semantic_sim_thresh,  # from defaults
-                faiss_nprobe=faiss_nprobe_val,  # from defaults
+                semantic_similarity_threshold=semantic_sim_thresh,
+                faiss_nprobe=faiss_nprobe_val,
             )
 
         print_results(ranked_results[:results_disp_limit])
 
-    except FileNotFoundError as e:  # Should be less common now with explicit checks
+    except FileNotFoundError as e:
         logger.error(
             f"A required file was not found: {e.filename}.\n"
             "This could be an issue with configured paths or missing data.\n"
@@ -880,8 +936,8 @@ def main():
         )
         sys.exit(1)
     except OperationalError as e_db:
-        is_file_db_op_err = defaults.DEFAULT_DB_URL.startswith("sqlite:///")
-        db_file_path_op_err = defaults.DEFAULT_DB_PATH
+        is_file_db_op_err = defaults.DEFAULT_DB_URL.startswith("sqlite:///") # type: ignore
+        db_file_path_op_err = defaults.DEFAULT_DB_PATH # type: ignore
         if is_file_db_op_err and (
             "unable to open database file" in str(e_db).lower()
             or (db_file_path_op_err and not db_file_path_op_err.exists())
@@ -899,12 +955,12 @@ def main():
                 f"Database connection/operational error: {e_db}", exc_info=True
             )
         sys.exit(1)
-    except SQLAlchemyError as e_sqla:  # Catch other SQLAlchemy errors
+    except SQLAlchemyError as e_sqla:
         logger.error(
             "A database error occurred during search: %s", e_sqla, exc_info=True
         )
         sys.exit(1)
-    except Exception as e_general:  # Catch-all for other unexpected critical errors
+    except Exception as e_general:
         logger.critical(
             "An unexpected critical error occurred during search: %s",
             e_general,

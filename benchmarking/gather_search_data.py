@@ -32,10 +32,10 @@ except ImportError:
 # --- Configuration Constants ---
 BENCHMARK_QUERIES_FILE = "benchmarking/queries.txt"  # Input file for search queries.
 OUTPUT_JSON_FILE = "benchmarking/search_results.json"  # Output file for search results.
-NUM_LEANSEARCH_RESULTS = 10  # Default number of results from LeanSearch.
-MOOGLE_LIMIT = 10  # Default number of results from Moogle.
-NUM_LEANEXPLORE_RESULTS = 10  # Default number of results from LeanExplore.
-MAX_CONCURRENT_REQUESTS = 1  # Max concurrent search operations.
+NUM_LEANSEARCH_RESULTS = 10     # Default number of results from LeanSearch.
+MOOGLE_LIMIT = 10               # Default number of results from Moogle.
+NUM_LEANEXPLORE_RESULTS = 10    # Default number of results from LeanExplore.
+MAX_CONCURRENT_REQUESTS = 9     # Max concurrent search operations.
 # -----------------------------
 
 
@@ -340,7 +340,11 @@ def search_leanexplore_local(
     """
     try:
         # The local service's search method directly supports a limit.
-        api_search_response = service.search(query=query_str, limit=limit)
+        api_search_response = service.search(
+            query=query_str, 
+            limit=limit, 
+            package_filters=["Batteries", "Init", "Lean", "Mathlib", "Std"]
+        )
 
         results_list = []
         if (

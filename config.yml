@@ -62,11 +62,11 @@ search:
 
   # --- Ranking Weights ---
   # Weight for PageRank score (graph centrality).
-  pagerank_weight: 0.5
+  pagerank_weight: 0.2
   # Weight for semantic similarity score (query relevance).
   text_relevance_weight: 1
-  # Weight for Lean name match score.
-  name_match_weight: 0.5
+  # Name match weight
+  name_match_weight: 0.7
 
   # --- Output ---
   # Default number of final results to display.
