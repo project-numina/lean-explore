@@ -66,7 +66,7 @@ search:
   # Weight for semantic similarity score (query relevance).
   text_relevance_weight: 1
   # Name match weight
-  name_match_weight: 0.7
+  name_match_weight: 1
 
   # --- Output ---
   # Default number of final results to display.

@@ -103,7 +103,7 @@ DEFAULT_FAISS_NPROBE: Final[int] = 200  # For IVF-type FAISS indexes
 DEFAULT_SEM_SIM_THRESHOLD: Final[float] = 0.525
 DEFAULT_PAGERANK_WEIGHT: Final[float] = 0.2
 DEFAULT_TEXT_RELEVANCE_WEIGHT: Final[float] = 1.0
-DEFAULT_NAME_MATCH_WEIGHT: Final[float] = 0.7
+DEFAULT_NAME_MATCH_WEIGHT: Final[float] = 1
 
 # Output Parameters
 DEFAULT_RESULTS_LIMIT: Final[int] = (
