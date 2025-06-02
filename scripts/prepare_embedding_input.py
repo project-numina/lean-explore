@@ -257,7 +257,18 @@ def prepare_data(
                         sg_obj.primary_declaration
                         and sg_obj.primary_declaration.lean_name
                     ):
-                        lean_name_content = sg_obj.primary_declaration.lean_name.strip()
+                        path_part = sg_obj.source_file.strip()
+                        name_part = sg_obj.primary_declaration.lean_name.strip()
+                        
+                        if path_part and name_part:
+                            lean_name_content = f"{path_part}:{name_part}"
+                        else:
+                            logger.debug(
+                                "SG ID %d: Could not form combined 'path:name' for lean_name entry because "
+                                "either the source_file ('%s') or lean_name ('%s') from primary declaration "
+                                "was empty after stripping. Skipping entry.",
+                                sg_id, sg_obj.source_file, sg_obj.primary_declaration.lean_name
+                            )
 
                     if lean_name_content:
                         output_records.append(
@@ -270,8 +281,8 @@ def prepare_data(
                         )
                     else:
                         logger.debug(
-                            "SG ID %d: No non-empty lean name found for primary "
-                            "declaration. Skipping entry.",
+                            "SG ID %d: No valid text could be generated for lean_name "
+                            "(path:name) for primary declaration. Skipping entry.",
                             sg_id,
                         )
                 elif exclude_lean_names:
