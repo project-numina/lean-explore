@@ -20,7 +20,7 @@ If you use LeanExplore in your research or work, please cite it as follows:
 
 **General Citation:**
 
-Justin Asher. (2025). *LeanExplore: A search engine for Lean 4 declarations*. LeanExplore.com. Retrieved from [http://www.leanexplore.com](http://www.leanexplore.com) (GitHub: [https://github.com/justincasher/lean-explore](https://github.com/justincasher/lean-explore)).
+Justin Asher. (2025). *LeanExplore: A search engine for Lean 4 declarations*. LeanExplore.com. (GitHub: [https://github.com/justincasher/lean-explore](https://github.com/justincasher/lean-explore)).
 
 **BibTeX Entry:**
 
@@ -29,7 +29,6 @@ Justin Asher. (2025). *LeanExplore: A search engine for Lean 4 declarations*. Le
   author = {Asher, Justin},
   title = {{LeanExplore: A search engine for Lean 4 declarations}},
   year = {2025},
-  publisher = {LeanExplore.com},
   url = {http://www.leanexplore.com},
   note = {GitHub repository: https://github.com/justincasher/lean-explore}
 }
