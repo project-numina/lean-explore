@@ -6,7 +6,8 @@ This module provides functions to save and load user-specific settings,
 such as API keys for Lean Explore and OpenAI, from a configuration
 file stored in the user's home directory. It handles file creation,
 parsing, and sets secure permissions for files containing sensitive
-information.
+information. It also supports loading API keys from environment
+variables as a fallback if they are not found in the configuration file.
 """
 
 import logging
@@ -23,12 +24,14 @@ _APP_CONFIG_DIR_NAME: str = "leanexplore"
 _CONFIG_FILENAME: str = "config.toml"
 
 # Define keys for Lean Explore API section
-_LEAN_EXPLORE_API_SECTION_NAME: str = "lean_explore_api"  # Renamed for clarity
+_LEAN_EXPLORE_API_SECTION_NAME: str = "lean_explore_api"
 _LEAN_EXPLORE_API_KEY_NAME: str = "key"
+_LEAN_EXPLORE_API_KEY_ENV_VAR: str = "LEANEXPLORE_API_KEY"
 
 # Define keys for OpenAI API section
 _OPENAI_API_SECTION_NAME: str = "openai"
-_OPENAI_API_KEY_NAME: str = "api_key"  # Using a distinct key name for clarity
+_OPENAI_API_KEY_NAME: str = "api_key"
+_OPENAI_API_KEY_ENV_VAR: str = "OPENAI_API_KEY"
 
 
 def get_config_file_path() -> pathlib.Path:
@@ -83,7 +86,6 @@ def _load_config_data(config_file_path: pathlib.Path) -> Dict[str, Any]:
                 "Configuration file %s is corrupted. Treating as empty.",
                 config_file_path,
             )
-            # Potentially back up corrupted file before returning empty
         except Exception as e:
             logger.error(
                 "Error reading existing config file %s: %s",
@@ -91,7 +93,6 @@ def _load_config_data(config_file_path: pathlib.Path) -> Dict[str, Any]:
                 e,
                 exc_info=True,
             )
-            # Decide if to proceed with empty or raise further
     return config_data
 
 
@@ -162,9 +163,7 @@ def save_api_key(api_key: str) -> bool:
         if _save_config_data(config_file_path, config_data):
             logger.info("Lean Explore API key saved to %s", config_file_path)
             return True
-    except (
-        Exception
-    ) as e:  # Catch any exception from _ensure_config_dir_exists or broad issues
+    except Exception as e:
         logger.error(
             "General error during Lean Explore API key saving process: %s",
             e,
@@ -174,50 +173,86 @@ def save_api_key(api_key: str) -> bool:
 
 
 def load_api_key() -> Optional[str]:
-    """Loads the Lean Explore API key from the user's configuration file.
+    """Loads the Lean Explore API key.
+
+    It first checks the user's configuration file (typically
+    ~/.config/leanexplore/config.toml under the section
+    `lean_explore_api` with key `key`). If a valid, non-empty API key
+    is found there, it is returned.
+
+    If the API key is not found in the configuration file, is empty,
+    or is not a string, this function then checks the environment
+    variable `LEAN_EXPLORE_API_KEY`. If this environment variable is
+    set to a non-empty string, its value is returned.
+
+    If the API key is not found or is invalid in both locations,
+    None is returned.
 
     Returns:
         Optional[str]: The Lean Explore API key string if found and valid,
             otherwise None.
     """
     config_file_path = get_config_file_path()
-    if not config_file_path.exists() or not config_file_path.is_file():
+
+    # 1. Try loading from config file
+    if config_file_path.exists() and config_file_path.is_file():
+        try:
+            config_data = _load_config_data(config_file_path)
+            key_value = config_data.get(_LEAN_EXPLORE_API_SECTION_NAME, {}).get(
+                _LEAN_EXPLORE_API_KEY_NAME
+            )
+
+            if isinstance(key_value, str) and key_value:  # Non-empty string
+                logger.debug(
+                    "Lean Explore API key loaded from configuration file %s",
+                    config_file_path,
+                )
+                return key_value
+            elif key_value is not None:  # Present but not a valid non-empty string
+                logger.warning(
+                    "Lean Explore API key found in %s but is not a valid "
+                    "non-empty string. "
+                    "Will check environment variable %s.",
+                    config_file_path,
+                    _LEAN_EXPLORE_API_KEY_ENV_VAR,
+                )
+        except Exception as e:  # Catch unexpected errors during config processing
+            logger.error(
+                "Error processing configuration file %s for Lean Explore API key: %s. "
+                "Will check environment variable %s.",
+                config_file_path,
+                e,
+                _LEAN_EXPLORE_API_KEY_ENV_VAR,
+                exc_info=True,
+            )
+    else:
         logger.debug(
-            "Configuration file not found at %s for Lean Explore API key.",
+            "Configuration file %s not found. Will check environment "
+            "variable %s for Lean Explore API key.",
             config_file_path,
-        )
-        return None
-
-    try:
-        config_data = _load_config_data(config_file_path)
-        api_key = config_data.get(_LEAN_EXPLORE_API_SECTION_NAME, {}).get(
-            _LEAN_EXPLORE_API_KEY_NAME
+            _LEAN_EXPLORE_API_KEY_ENV_VAR,
         )
 
-        if api_key and isinstance(api_key, str):
-            logger.debug(
-                "Lean Explore API key loaded successfully from %s", config_file_path
-            )
-            return api_key
-        elif api_key:  # Found but not a string
-            logger.warning(
-                "Lean Explore API key found in %s but is not a valid string.",
-                config_file_path,
-            )
-        else:  # Not found under the expected keys
-            logger.debug(
-                "Lean Explore API key not found under section '%s', key '%s' in %s",
-                _LEAN_EXPLORE_API_SECTION_NAME,
-                _LEAN_EXPLORE_API_KEY_NAME,
-                config_file_path,
-            )
-    except Exception as e:  # Catch any other unexpected errors during loading
-        logger.error(
-            "Unexpected error loading Lean Explore API key from %s: %s",
-            config_file_path,
-            e,
-            exc_info=True,
+    # 2. Try loading from environment variable
+    api_key_from_env = os.getenv(_LEAN_EXPLORE_API_KEY_ENV_VAR)
+
+    if isinstance(api_key_from_env, str) and api_key_from_env:  # Non-empty string
+        logger.debug(
+            "Lean Explore API key loaded from environment variable %s",
+            _LEAN_EXPLORE_API_KEY_ENV_VAR,
         )
+        return api_key_from_env
+    elif api_key_from_env is not None:  # Env var exists but is empty string
+        logger.debug(
+            "Environment variable %s for Lean Explore API key is set but empty.",
+            _LEAN_EXPLORE_API_KEY_ENV_VAR,
+        )
+
+    logger.debug(
+        "Lean Explore API key not found in configuration file or "
+        "valid in environment variable %s.",
+        _LEAN_EXPLORE_API_KEY_ENV_VAR,
+    )
     return None
 
 
@@ -262,7 +297,7 @@ def delete_api_key() -> bool:
                 "Lean Explore API key not found in %s, no deletion performed.",
                 config_file_path,
             )
-            return True  # Key wasn't there, so considered successful
+            return True
 
     except Exception as e:
         logger.error(
@@ -316,46 +351,84 @@ def save_openai_api_key(api_key: str) -> bool:
 
 
 def load_openai_api_key() -> Optional[str]:
-    """Loads the OpenAI API key from the user's configuration file.
+    """Loads the OpenAI API key.
+
+    It first checks the user's configuration file (typically
+    ~/.config/leanexplore/config.toml under the section
+    `openai` with key `api_key`). If a valid, non-empty API key
+    is found there, it is returned.
+
+    If the API key is not found in the configuration file, is empty,
+    or is not a string, this function then checks the environment
+    variable `OPENAI_API_KEY`. If this environment variable is
+    set to a non-empty string, its value is returned.
+
+    If the API key is not found or is invalid in both locations,
+    None is returned.
 
     Returns:
         Optional[str]: The OpenAI API key string if found and valid, otherwise None.
     """
     config_file_path = get_config_file_path()
-    if not config_file_path.exists() or not config_file_path.is_file():
+
+    # 1. Try loading from config file
+    if config_file_path.exists() and config_file_path.is_file():
+        try:
+            config_data = _load_config_data(config_file_path)
+            key_value = config_data.get(_OPENAI_API_SECTION_NAME, {}).get(
+                _OPENAI_API_KEY_NAME
+            )
+
+            if isinstance(key_value, str) and key_value:  # Non-empty string
+                logger.debug(
+                    "OpenAI API key loaded from configuration file %s",
+                    config_file_path,
+                )
+                return key_value
+            elif key_value is not None:  # Present but not a valid non-empty string
+                logger.warning(
+                    "OpenAI API key found in %s but is not a valid non-empty string. "
+                    "Will check environment variable %s.",
+                    config_file_path,
+                    _OPENAI_API_KEY_ENV_VAR,
+                )
+        except Exception as e:  # Catch unexpected errors during config processing
+            logger.error(
+                "Error processing configuration file %s for OpenAI API key: %s. "
+                "Will check environment variable %s.",
+                config_file_path,
+                e,
+                _OPENAI_API_KEY_ENV_VAR,
+                exc_info=True,
+            )
+    else:
         logger.debug(
-            "Configuration file not found at %s for OpenAI API key.", config_file_path
-        )
-        return None
-
-    try:
-        config_data = _load_config_data(config_file_path)
-        api_key = config_data.get(_OPENAI_API_SECTION_NAME, {}).get(
-            _OPENAI_API_KEY_NAME
-        )
-
-        if api_key and isinstance(api_key, str):
-            logger.debug("OpenAI API key loaded successfully from %s", config_file_path)
-            return api_key
-        elif api_key:  # Found but not a string
-            logger.warning(
-                "OpenAI API key found in %s but is not a valid string.",
-                config_file_path,
-            )
-        else:  # Not found under the expected keys
-            logger.debug(
-                "OpenAI API key not found under section '%s', key '%s' in %s",
-                _OPENAI_API_SECTION_NAME,
-                _OPENAI_API_KEY_NAME,
-                config_file_path,
-            )
-    except Exception as e:
-        logger.error(
-            "Unexpected error loading OpenAI API key from %s: %s",
+            "Configuration file %s not found. Will check environment "
+            "variable %s for OpenAI API key.",
             config_file_path,
-            e,
-            exc_info=True,
+            _OPENAI_API_KEY_ENV_VAR,
         )
+
+    # 2. Try loading from environment variable
+    api_key_from_env = os.getenv(_OPENAI_API_KEY_ENV_VAR)
+
+    if isinstance(api_key_from_env, str) and api_key_from_env:  # Non-empty string
+        logger.debug(
+            "OpenAI API key loaded from environment variable %s",
+            _OPENAI_API_KEY_ENV_VAR,
+        )
+        return api_key_from_env
+    elif api_key_from_env is not None:  # Env var exists but is empty string
+        logger.debug(
+            "Environment variable %s for OpenAI API key is set but empty.",
+            _OPENAI_API_KEY_ENV_VAR,
+        )
+
+    logger.debug(
+        "OpenAI API key not found in configuration file or valid in "
+        "environment variable %s.",
+        _OPENAI_API_KEY_ENV_VAR,
+    )
     return None
 
 
@@ -396,7 +469,7 @@ def delete_openai_api_key() -> bool:
                 "OpenAI API key not found in %s, no deletion performed.",
                 config_file_path,
             )
-            return True  # Key wasn't there, so considered successful
+            return True
 
     except Exception as e:
         logger.error(
