@@ -1,4 +1,5 @@
 # tests/test_defaults.py
+
 """Tests for the lean_explore.defaults module.
 
 This module verifies the correctness of default path constructions and
@@ -55,8 +56,6 @@ class TestOriginalDefaults:
                            but for these assertions, we focus on derivations from
                            the already set USER_HOME_DIR).
         """
-        # The following assertions check the relative construction logic
-        # based on the value of project_defaults.USER_HOME_DIR set at import time.
         assert (
             project_defaults.LEAN_EXPLORE_USER_DATA_DIR
             == project_defaults.USER_HOME_DIR / ".lean_explore" / "data"
@@ -72,7 +71,6 @@ class TestOriginalDefaults:
         Args:
             mock_home_dir: The mocked home directory path.
         """
-        # Similar to above, testing the logic.
         expected_base = (
             project_defaults.USER_HOME_DIR / ".lean_explore" / "data" / "toolchains"
         )
@@ -110,9 +108,6 @@ class TestOriginalDefaults:
         Args:
             mock_home_dir: The mocked home directory path.
         """
-        # The .resolve() in the original DEFAULT_DB_URL definition might behave
-        # differently if the path doesn't exist. For testing the format, we assume
-        # DEFAULT_DB_PATH is what it would be.
         expected_db_path_str = str(project_defaults.DEFAULT_DB_PATH.resolve())
         assert project_defaults.DEFAULT_DB_URL == f"sqlite:///{expected_db_path_str}"
 
@@ -132,7 +127,7 @@ class TestOriginalDefaults:
 
     def test_string_constants_values(self):
         """Checks the values of important string constants."""
-        assert project_defaults.DEFAULT_ACTIVE_TOOLCHAIN_VERSION == "0.1.0"
+        assert project_defaults.DEFAULT_ACTIVE_TOOLCHAIN_VERSION == "0.2.0"
         assert project_defaults.DEFAULT_DB_FILENAME == "lean_explore_data.db"
         assert project_defaults.DEFAULT_FAISS_INDEX_FILENAME == "main_faiss.index"
         assert project_defaults.DEFAULT_FAISS_MAP_FILENAME == "faiss_ids_map.json"
@@ -153,10 +148,11 @@ class TestOriginalDefaults:
         """Checks the values of important numeric constants."""
         assert project_defaults.DEFAULT_FAISS_K == 100
         assert project_defaults.DEFAULT_FAISS_NPROBE == 200
+        assert project_defaults.DEFAULT_FAISS_OVERSAMPLING_FACTOR == 3
         assert project_defaults.DEFAULT_SEM_SIM_THRESHOLD == 0.525
-        assert project_defaults.DEFAULT_PAGERANK_WEIGHT == 1.0
-        assert project_defaults.DEFAULT_TEXT_RELEVANCE_WEIGHT == 0.2
-        assert project_defaults.DEFAULT_NAME_MATCH_WEIGHT == 0.5
+        assert project_defaults.DEFAULT_PAGERANK_WEIGHT == 0.2
+        assert project_defaults.DEFAULT_TEXT_RELEVANCE_WEIGHT == 1.0
+        assert project_defaults.DEFAULT_NAME_MATCH_WEIGHT == 1.0
         assert project_defaults.DEFAULT_RESULTS_LIMIT == 50
 
 
@@ -178,8 +174,6 @@ class TestIsolatedDefaults:
                                  user data structure and patching defaults.
             tmp_path: Pytest's built-in temporary directory fixture.
         """
-        # isolated_data_paths yields the root of the mocked user data structure
-        # which is set as LEAN_EXPLORE_USER_DATA_DIR by the fixture.
         assert project_defaults.LEAN_EXPLORE_USER_DATA_DIR == isolated_data_paths
         assert tmp_path in project_defaults.LEAN_EXPLORE_USER_DATA_DIR.parents
 
@@ -258,7 +252,6 @@ class TestIsolatedDefaults:
             isolated_data_paths: Fixture providing the isolated user data root.
             tmp_path: Pytest's built-in temporary directory fixture.
         """
-        # The isolated_data_paths fixture monkeypatches DEFAULT_DB_URL directly
         mocked_db_path_str = str(project_defaults.DEFAULT_DB_PATH.resolve())
         assert project_defaults.DEFAULT_DB_URL == f"sqlite:///{mocked_db_path_str}"
         assert str(tmp_path) in project_defaults.DEFAULT_DB_URL
@@ -288,13 +281,23 @@ class TestIsolatedDefaults:
         Args:
             isolated_data_paths: Fixture that patches path defaults.
         """
-        # This test confirms that the isolated_data_paths fixture only targets
-        # path variables and doesn't unintentionally alter other constants.
-        assert project_defaults.DEFAULT_ACTIVE_TOOLCHAIN_VERSION == "0.1.0"
+        assert project_defaults.DEFAULT_ACTIVE_TOOLCHAIN_VERSION == "0.2.0"
         assert project_defaults.DEFAULT_EMBEDDING_MODEL_NAME == "BAAI/bge-base-en-v1.5"
         assert (
             project_defaults.R2_MANIFEST_DEFAULT_URL
             == "https://pub-48b75babc4664808b15520033423c765.r2.dev/manifest.json"
         )
+        assert (
+            project_defaults.R2_ASSETS_BASE_URL
+            == "https://pub-48b75babc4664808b15520033423c765.r2.dev/"
+        )
+
+        # Numeric search/config parameters
         assert project_defaults.DEFAULT_FAISS_K == 100
+        assert project_defaults.DEFAULT_FAISS_NPROBE == 200
+        assert project_defaults.DEFAULT_FAISS_OVERSAMPLING_FACTOR == 3
         assert project_defaults.DEFAULT_SEM_SIM_THRESHOLD == 0.525
+        assert project_defaults.DEFAULT_PAGERANK_WEIGHT == 0.2
+        assert project_defaults.DEFAULT_TEXT_RELEVANCE_WEIGHT == 1.0
+        assert project_defaults.DEFAULT_NAME_MATCH_WEIGHT == 1.0
+        assert project_defaults.DEFAULT_RESULTS_LIMIT == 50

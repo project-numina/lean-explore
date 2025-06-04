@@ -32,15 +32,15 @@
     },
     "0.2.0": {
       "description": "v0.2.0",
-      "release_date": "2025-06-03",
+      "release_date": "2025-06-04",
       "assets_base_path_r2": "assets/0.2.0/",
       "files": [
         {
           "local_name": "lean_explore_data.db",
           "remote_name": "lean_explore_data.db.gz",
-          "sha256": "2b83437e26933cb3820f1122513e81a3aaab4de7fcdf17458de30cba2329f540",
-          "size_bytes_compressed": 877119042,
-          "size_bytes_uncompressed": 3029925888
+          "sha256": "3a25e671c27d49da13a81cfd2e4ab883df31fdfa69ae6a65f8d67856485f06bc",
+          "size_bytes_compressed": 830954225,
+          "size_bytes_uncompressed": 3778564096
         },
         {
           "local_name": "main_faiss.index",

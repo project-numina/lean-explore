@@ -321,11 +321,8 @@ def construct_llm_prompt(
     user_prompt_parts.append("Search Results:\n")
 
     for placeholder in sorted(engine_placeholders.keys()):
-        actual_engine_name = engine_placeholders[placeholder]
         results_str = formatted_results[placeholder]
-        user_prompt_parts.append(
-            f"\n----- {placeholder} -----\n\n{results_str}\n"
-        )
+        user_prompt_parts.append(f"\n----- {placeholder} -----\n\n{results_str}\n")
 
     user_prompt_parts.append(
         "\nBased on the original query, please provide your detailed reasoning "
@@ -457,7 +454,7 @@ def parse_llm_ranking(
             error_messages.append(f"Missing expected engines: {missing_engines}")
         if extra_engines:
             error_messages.append(
-                f"Found unexpected/unmapped engines in final ranked set: "
+                "Found unexpected/unmapped engines in final ranked set: "
                 f"{extra_engines}"
             )
 
@@ -586,28 +583,31 @@ async def evaluate_single_query(
                     else:
                         evaluation_entry["llm_parsed_ranking"] = []
                         evaluation_entry["llm_error"] = (
-                            f"LLM response's ranking line ('{ranking_line_this_attempt}') "
-                            "could not be parsed."
+                            "LLM response's ranking line "
+                            f"('{ranking_line_this_attempt}') could not be parsed."
                         )
                         print(
-                            f"Info: Parsing of ranking line '{ranking_line_this_attempt}' for query "
-                            f"'{query_string[:50]}...' (Attempt {attempt + 1}) resulted in an empty ranking. "
-                            "Check warnings from parser."
+                            "Info: Parsing of ranking line "
+                            f"'{ranking_line_this_attempt}' for query "
+                            f"'{query_string[:50]}...' (Attempt {attempt + 1}) "
+                            "resulted in an empty ranking. Check warnings from parser."
                         )
                 else:  # No ranking line extracted from non-empty response
                     evaluation_entry["llm_parsed_ranking"] = []
                     if any(line.strip() for line in lines):
                         evaluation_entry["llm_error"] = (
-                            "LLM response had content but no final ranking line was identified."
+                            "LLM response had content but no final ranking line "
+                            "was identified."
                         )
                         print(
                             f"Warning: LLM response for query '{query_string[:50]}...' "
                             f"(Attempt {attempt + 1}) contained text but no "
                             "clear ranking line was extracted."
                         )
-                    else: # Response became empty after strip
-                         evaluation_entry["llm_error"] = (
-                            "LLM returned an effectively empty response (e.g., only newlines)."
+                    else:  # Response became empty after strip
+                        evaluation_entry["llm_error"] = (
+                            "LLM returned an effectively empty response "
+                            "(e.g., only newlines)."
                         )
             else:  # LLM returned None or empty string
                 evaluation_entry["llm_parsed_ranking"] = []
@@ -616,27 +616,32 @@ async def evaluate_single_query(
                 )
 
         except Exception as e:
-            print(f"Error during LLM call for query '{query_string[:50]}...' (Attempt {attempt + 1}): {e}")
+            print(
+                f"Error during LLM call for query '{query_string[:50]}...' "
+                f"(Attempt {attempt + 1}): {e}"
+            )
             evaluation_entry["llm_error"] = str(e)
             evaluation_entry["llm_parsed_ranking"] = []
             # llm_raw_response may be None or from a partial failure
 
-        if not evaluation_entry["llm_parsed_ranking"]:  # If not successful this attempt
+        if not evaluation_entry["llm_parsed_ranking"]:
             if attempt < MAX_LLM_PARSE_RETRIES:
                 print(
-                    f"Warning: Attempt {attempt + 1}/{MAX_LLM_PARSE_RETRIES + 1} for query "
-                    f"'{query_string[:50]}...' failed. Error: {evaluation_entry['llm_error']}. Retrying..."
+                    "Warning: Attempt "
+                    f"{attempt + 1}/{MAX_LLM_PARSE_RETRIES + 1} for query "
+                    f"'{query_string[:50]}...' failed. Error: "
+                    f"{evaluation_entry['llm_error']}. Retrying..."
                 )
-                await asyncio.sleep(1 + attempt)  # Small, increasing delay
-            else:  # Last attempt failed
+                await asyncio.sleep(1 + attempt)
+            else:
                 print(
-                    f"Error: Failed to get a valid, parsable ranking for query "
-                    f"'{query_string[:50]}...' after {MAX_LLM_PARSE_RETRIES + 1} attempts. "
+                    "Error: Failed to get a valid, parsable ranking for query "
+                    f"'{query_string[:50]}...' after {MAX_LLM_PARSE_RETRIES + 1} "
+                    "attempts. "
                     f"Last error: {evaluation_entry['llm_error']}"
                 )
-                # Error and raw_response from the last attempt are already in evaluation_entry
-        else: # Successfully parsed in this attempt
-            pass # Loop will break due to the 'break' statement earlier
+        else:
+            pass
 
     return evaluation_entry
 
@@ -813,7 +818,7 @@ async def main_evaluation_loop():
                         )
                 except Exception as e:
                     tqdm.write(
-                        f"Error writing intermediate results to "
+                        "Error writing intermediate results to "
                         f"'{evaluation_output_path}': {e}"
                     )
             except Exception as e:

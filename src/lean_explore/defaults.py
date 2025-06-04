@@ -31,7 +31,7 @@ LEAN_EXPLORE_TOOLCHAINS_BASE_DIR: Final[pathlib.Path] = (
 # In future enhancements, this could be determined dynamically
 # or from user configuration.
 # For now, it's set to the initial version of data provided ("0.1.0").
-DEFAULT_ACTIVE_TOOLCHAIN_VERSION: Final[str] = "0.1.0"
+DEFAULT_ACTIVE_TOOLCHAIN_VERSION: Final[str] = "0.2.0"
 
 # Path to the data directory for the currently active toolchain version.
 # Example: ~/.lean_explore/data/toolchains/0.1.0/
@@ -98,20 +98,17 @@ DEFAULT_EMBEDDING_MODEL_NAME: Final[str] = "BAAI/bge-base-en-v1.5"
 # FAISS Search Parameters
 DEFAULT_FAISS_K: Final[int] = 100  # Number of nearest neighbors from FAISS
 DEFAULT_FAISS_NPROBE: Final[int] = 200  # For IVF-type FAISS indexes
+DEFAULT_FAISS_OVERSAMPLING_FACTOR: Final[int] = (
+    3  # Factor to multiply faiss_k by when package filters are active.
+)
 
 # Scoring and Ranking Parameters
 DEFAULT_SEM_SIM_THRESHOLD: Final[float] = 0.525
 DEFAULT_PAGERANK_WEIGHT: Final[float] = 0.2
 DEFAULT_TEXT_RELEVANCE_WEIGHT: Final[float] = 1.0
-DEFAULT_NAME_MATCH_WEIGHT: Final[float] = 1
+DEFAULT_NAME_MATCH_WEIGHT: Final[float] = 1.0  # Ensuring float for consistency
 
 # Output Parameters
 DEFAULT_RESULTS_LIMIT: Final[int] = (
     50  # Default number of final results to display/return
 )
-
-
-# --- Other Constants (if any emerge) ---
-# Example: If your application needs other hardcoded default values,
-# they can be added here.
-# DEFAULT_SOME_OTHER_PARAMETER: Final[Any] = "some_value"

@@ -24,18 +24,19 @@ except ImportError:
     LeanExploreLocalService = None  # type: ignore
     lean_explore_api_config_utils = None  # type: ignore
     print(
-        "Warning: lean_explore package or its core components (API client, Local service) "
-        "not found. LeanExplore search functionalities will be limited or unavailable."
+        "Warning: lean_explore package or its core components (API client, "
+        "Local service) not found. LeanExplore search functionalities will "
+        "be limited or unavailable."
     )
 
 
 # --- Configuration Constants ---
 BENCHMARK_QUERIES_FILE = "benchmarking/queries.txt"  # Input file for search queries.
 OUTPUT_JSON_FILE = "benchmarking/search_results.json"  # Output file for search results.
-NUM_LEANSEARCH_RESULTS = 10     # Default number of results from LeanSearch.
-MOOGLE_LIMIT = 10               # Default number of results from Moogle.
-NUM_LEANEXPLORE_RESULTS = 10    # Default number of results from LeanExplore.
-MAX_CONCURRENT_REQUESTS = 9     # Max concurrent search operations.
+NUM_LEANSEARCH_RESULTS = 10  # Default number of results from LeanSearch.
+MOOGLE_LIMIT = 10  # Default number of results from Moogle.
+NUM_LEANEXPLORE_RESULTS = 10  # Default number of results from LeanExplore.
+MAX_CONCURRENT_REQUESTS = 9  # Max concurrent search operations.
 # -----------------------------
 
 
@@ -189,7 +190,9 @@ async def initialize_leanexplore_api_client() -> Optional[LeanExploreApiClient]:
         tqdm.write("LeanExplore API client components not available.")
         return None
     if lean_explore_api_config_utils is None:
-        tqdm.write("LeanExplore API config utilities not available for API key loading.")
+        tqdm.write(
+            "LeanExplore API config utilities not available for API key loading."
+        )
         # Fallback to environment variable only
         api_key = os.getenv("LEANEXPLORE_API_KEY")
     else:
@@ -241,16 +244,23 @@ def initialize_leanexplore_local_service() -> Optional[LeanExploreLocalService]:
         return service
     except FileNotFoundError as e:
         tqdm.write(
-            f"Failed to initialize LeanExplore Local Service: Critical data file not found. {e}"
+            "Failed to initialize LeanExplore Local Service: Critical data file "
+            f"not found. {e}"
         )
-        tqdm.write("Please ensure local data (DB, FAISS index, models) is correctly set up.")
+        tqdm.write(
+            "Please ensure local data (DB, FAISS index, models) is correctly set up."
+        )
         tqdm.write("You may need to run 'leanexplore data fetch'.")
         return None
     except RuntimeError as e:
-        tqdm.write(f"Failed to initialize LeanExplore Local Service: Runtime error. {e}")
+        tqdm.write(
+            f"Failed to initialize LeanExplore Local Service: Runtime error. {e}"
+        )
         return None
     except Exception as e:
-        tqdm.write(f"An unexpected error occurred initializing LeanExplore Local Service: {e}")
+        tqdm.write(
+            f"An unexpected error occurred initializing LeanExplore Local Service: {e}"
+        )
         return None
 
 
@@ -284,14 +294,14 @@ async def search_leanexplore_api(
             "count": (
                 api_search_response.count
                 if hasattr(api_search_response, "count")
-                else len(results_list) # Fallback if count attribute missing
+                else len(results_list)  # Fallback if count attribute missing
             ),
-            "results": results_list,
             "processing_time_ms": (
                 api_search_response.processing_time_ms
                 if hasattr(api_search_response, "processing_time_ms")
-                else -1 # Indicate not available
-            )
+                else -1  # Indicate not available
+            ),
+            "results": results_list,
         }
     except httpx.HTTPStatusError as e_http:
         error_msg = (
@@ -318,7 +328,7 @@ async def search_leanexplore_api(
         return {"error": f"Network request failed: {str(e_req)}", "query": query_str}
     except Exception as e:
         tqdm.write(
-            f"An unexpected error occurred searching LeanExplore (API) for "
+            "An unexpected error occurred searching LeanExplore (API) for "
             f"'{query_str[:30]}...': {e}"
         )
         return {"error": str(e), "query": query_str}
@@ -339,11 +349,10 @@ def search_leanexplore_local(
         or an error dictionary if the operation fails.
     """
     try:
-        # The local service's search method directly supports a limit.
         api_search_response = service.search(
-            query=query_str, 
-            limit=limit, 
-            package_filters=["Batteries", "Init", "Lean", "Mathlib", "Std"]
+            query=query_str,
+            limit=limit,
+            package_filters=["Batteries", "Init", "Lean", "Mathlib", "Std"],
         )
 
         results_list = []
@@ -352,36 +361,38 @@ def search_leanexplore_local(
             and hasattr(api_search_response, "results")
             and api_search_response.results
         ):
-            # The service already returns APISearchResultItem, dump to dict
-            for item in api_search_response.results: # Already limited by service.search
+            for item in api_search_response.results:
                 results_list.append(item.model_dump())
-        
+
         return {
             "count": (
-                 api_search_response.count
-                 if hasattr(api_search_response, "count")
-                 else len(results_list)
+                api_search_response.count
+                if hasattr(api_search_response, "count")
+                else len(results_list)
             ),
             "total_candidates_considered": (
                 api_search_response.total_candidates_considered
                 if hasattr(api_search_response, "total_candidates_considered")
                 else -1
             ),
-            "results": results_list,
             "processing_time_ms": (
                 api_search_response.processing_time_ms
                 if hasattr(api_search_response, "processing_time_ms")
                 else -1
             ),
+            "results": results_list,
         }
-    except RuntimeError as e_rt: # Catch runtime errors from service (e.g. assets not loaded)
+    except RuntimeError as e_rt:
         tqdm.write(
             f"LeanExplore Local Service runtime error for '{query_str[:30]}...': {e_rt}"
         )
-        return {"error": f"Local Service runtime error: {str(e_rt)}", "query": query_str}
+        return {
+            "error": f"Local Service runtime error: {str(e_rt)}",
+            "query": query_str,
+        }
     except Exception as e:
         tqdm.write(
-            f"An unexpected error occurred searching LeanExplore (Local) for "
+            "An unexpected error occurred searching LeanExplore (Local) for "
             f"'{query_str[:30]}...': {e}"
         )
         return {"error": str(e), "query": query_str}
@@ -455,24 +466,21 @@ async def _fetch_leanexplore_concurrently(
         result: Dict[str, Any]
         if leanexplore_mode == "api":
             if not isinstance(leanexplore_source, LeanExploreApiClient):
-                # This case should ideally be prevented by earlier checks
-                # when leanexplore_source is initialized.
                 msg = "Internal error: Mismatched LeanExplore source type for API mode."
                 tqdm.write(msg)
                 return query_str, "leanexplore", {"error": msg}
-            result = await search_leanexplore_api(
-                query_str, leanexplore_source, limit
-            )
+            result = await search_leanexplore_api(query_str, leanexplore_source, limit)
         elif leanexplore_mode == "local":
             if not isinstance(leanexplore_source, LeanExploreLocalService):
-                msg = "Internal error: Mismatched LeanExplore source type for local mode."
+                msg = (
+                    "Internal error: Mismatched LeanExplore source type for local mode."
+                )
                 tqdm.write(msg)
                 return query_str, "leanexplore", {"error": msg}
             result = await asyncio.to_thread(
                 search_leanexplore_local, query_str, leanexplore_source, limit
             )
         else:
-            # Should not be reached if argparse choices are enforced.
             msg = f"Invalid LeanExplore mode specified: {leanexplore_mode}"
             tqdm.write(msg)
             return query_str, "leanexplore", {"error": msg}
@@ -597,7 +605,7 @@ async def gather_all_search_data(
             leanexplore_source_instance = await initialize_leanexplore_api_client()
         elif leanexplore_mode == "local":
             leanexplore_source_instance = initialize_leanexplore_local_service()
-        
+
         if leanexplore_source_instance:
             can_run_leanexplore = True
         else:
@@ -610,10 +618,9 @@ async def gather_all_search_data(
             "LeanExplore package not available. LeanExplore searches will be skipped."
         )
 
-
     tqdm.write("\n--- Identifying and preparing search tasks ---")
     for query_str_item in queries:
-        query_needs_processing = False # Flag to check if any task is added for this query
+        query_needs_processing = False
 
         # LeanSearch tasks
         if not update_only_leanexplore:
@@ -633,7 +640,8 @@ async def gather_all_search_data(
                 query_needs_processing = True
             else:
                 tqdm.write(
-                    f"   LeanSearch: Skipping '{query_str_item[:30]}...', results exist."
+                    f"   LeanSearch: Skipping '{query_str_item[:30]}...', "
+                    "results exist."
                 )
 
         # Moogle tasks
@@ -654,7 +662,9 @@ async def gather_all_search_data(
                 )
                 query_needs_processing = True
             else:
-                tqdm.write(f"   Moogle: Skipping '{query_str_item[:30]}...', results exist.")
+                tqdm.write(
+                    f"   Moogle: Skipping '{query_str_item[:30]}...', results exist."
+                )
 
         # LeanExplore tasks
         if can_run_leanexplore and leanexplore_source_instance:
@@ -677,14 +687,12 @@ async def gather_all_search_data(
                 )
                 query_needs_processing = True
             else:
-                 tqdm.write(
+                tqdm.write(
                     f"   LeanExplore ({leanexplore_mode}): Skipping "
                     f"'{query_str_item[:30]}...', results exist."
                 )
-        elif not query_needs_processing and update_only_leanexplore :
-             # If only updating LE and it didn't need update, still note it.
-             pass # Covered by previous "results exist" or general skip message if LE not runnable
-
+        elif not query_needs_processing and update_only_leanexplore:
+            pass
 
     if not tasks_for_this_run:
         tqdm.write(
@@ -709,48 +717,45 @@ async def gather_all_search_data(
             elif engine_name == "leanexplore":
                 all_query_data_map[query_str]["leanexplore_results"] = result_data
 
-    # Close LeanExplore API client if it was used and has a close method
     if (
         leanexplore_mode == "api"
         and isinstance(leanexplore_source_instance, LeanExploreApiClient)
-        and hasattr(leanexplore_source_instance, "_client") # httpx.AsyncClient is usually _client
-        and hasattr(leanexplore_source_instance._client, "is_closed") # Check if can be closed
+        and hasattr(leanexplore_source_instance, "_client")
+        and hasattr(leanexplore_source_instance._client, "is_closed")
         and not leanexplore_source_instance._client.is_closed
     ):
         tqdm.write("Closing LeanExplore API client's underlying HTTP client.")
-        await leanexplore_source_instance._client.aclose() # httpx.AsyncClient uses aclose
+        await leanexplore_source_instance._client.aclose()
 
-    # Update global LeanExplore status if it was not runnable for this session.
-    # This ensures that if LeanExplore was targeted but couldn't run,
-    # its entries reflect this generic failure rather than appearing as missing.
     generic_le_error_message: Optional[str] = None
     if not LEANEXPLORE_PACKAGE_AVAILABLE:
         generic_le_error_message = "LeanExplore package not installed or importable."
-    elif not can_run_leanexplore: # Package available, but specific mode init failed
+    elif not can_run_leanexplore:
         if leanexplore_mode == "api":
             generic_le_error_message = (
                 "LeanExplore API client could not be initialized "
                 "(e.g., API key issue or client error)."
             )
-        else: # local mode
+        else:
             generic_le_error_message = (
                 "LeanExplore local service could not be initialized "
                 "(e.g., data files missing or service error)."
             )
-    
+
     if generic_le_error_message:
-        tqdm.write(f"\nUpdating LeanExplore status for all queries: {generic_le_error_message}")
+        tqdm.write(
+            f"\nUpdating LeanExplore status for all queries: {generic_le_error_message}"
+        )
         for query_str_item in queries:
-            # Only overwrite if no result or a different error was there.
-            # If a successful result was there from a previous run, keep it.
-            current_le_res = all_query_data_map[query_str_item].get("leanexplore_results")
+            current_le_res = all_query_data_map[query_str_item].get(
+                "leanexplore_results"
+            )
             if current_le_res is None or (
                 isinstance(current_le_res, dict) and "error" in current_le_res
             ):
-                 all_query_data_map[query_str_item]["leanexplore_results"] = {
+                all_query_data_map[query_str_item]["leanexplore_results"] = {
                     "error": generic_le_error_message
                 }
-
 
     final_results_list = list(all_query_data_map.values())
 

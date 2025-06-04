@@ -1,4 +1,4 @@
-# tests/local/test_search.py
+# tests/lean_explore/local/test_search.py
 
 """Tests for core search logic and helper functions in `lean_explore.search`.
 
@@ -12,7 +12,7 @@ import datetime
 import json
 import logging
 import pathlib
-import sys  # For mocking sys.argv and sys.exit
+import sys
 from typing import TYPE_CHECKING, Dict, Tuple
 from unittest.mock import MagicMock, patch
 
@@ -20,7 +20,7 @@ import faiss
 import numpy as np
 import pytest
 from filelock import FileLock as FLock
-from filelock import Timeout  # Alias FLock
+from filelock import Timeout
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.engine import Engine as SQLAlchemyEngine
 from sqlalchemy.orm import Session as SQLAlchemySession
@@ -30,8 +30,9 @@ from lean_explore.local import search as search_module
 from lean_explore.shared.models.db import Declaration, StatementGroup
 
 if TYPE_CHECKING:
-    from pytest_mock import MockerFixture
-    from sqlalchemy.engine import Engine as SQLAlchemyEngine  # For specing mock engine
+    from pytest_mock import (
+        MockerFixture,  # Ensure this is correctly typed if used directly
+    )
 
 
 # --- Tests for Helper Functions (Assumed to be passing from previous steps) ---
@@ -42,7 +43,7 @@ class TestLogSearchEventToJson:
     def mock_log_paths(
         self,
         tmp_path: pathlib.Path,
-        monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,  # Correct type hint
         isolated_data_paths: pathlib.Path,
     ):
         """Mocks performance log paths to use a temporary directory.
@@ -50,10 +51,13 @@ class TestLogSearchEventToJson:
         Leverages `isolated_data_paths` to ensure base paths are already mocked
         and then further ensures the log-specific paths within `search_module`
         point to the temporary directory.
+
+        Args:
+            tmp_path: Pytest's built-in temporary directory fixture.
+            monkeypatch: Pytest fixture for modifying object attributes.
+            isolated_data_paths: Fixture providing isolated user data root.
         """
-        temp_log_dir = (
-            isolated_data_paths.parent / "logs_for_test"
-        )  # Ensure a unique subdir under tmp_path
+        temp_log_dir = isolated_data_paths.parent / "logs_for_test"
         temp_log_dir.mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setattr(search_module, "_USER_LOGS_BASE_DIR", temp_log_dir)
@@ -65,7 +69,6 @@ class TestLogSearchEventToJson:
         temp_lock_file = temp_log_dir / f"{search_module.PERFORMANCE_LOG_FILENAME}.lock"
         monkeypatch.setattr(search_module, "LOCK_PATH", str(temp_lock_file))
 
-        # Ensure the log file is empty before each test that uses this fixture
         if temp_log_file.exists():
             temp_log_file.unlink()
 
@@ -654,8 +657,10 @@ class TestPerformSearch:
             range_start_line=1,
             range_start_col=1,
             range_end_line=1,
-            range_end_col=1,
+            range_end_col=10,  # Added range
             scaled_pagerank_score=0.5,
+            docstring="doc1",
+            informal_description="informal1",
         )
         decl2 = Declaration(id=2, lean_name="SG2.name", decl_type="def")
         sg2 = StatementGroup(
@@ -665,11 +670,13 @@ class TestPerformSearch:
             text_hash="h2",
             statement_text="text2",
             source_file="PkgA/F2.lean",
-            range_start_line=1,
+            range_start_line=2,
             range_start_col=1,
-            range_end_line=1,
-            range_end_col=1,
+            range_end_line=2,
+            range_end_col=10,  # Added range
             scaled_pagerank_score=0.4,
+            docstring="doc2",
+            informal_description="informal2",
         )
         decl3 = Declaration(id=3, lean_name="SG3.name", decl_type="def")
         sg3 = StatementGroup(
@@ -679,11 +686,13 @@ class TestPerformSearch:
             text_hash="h3",
             statement_text="text3",
             source_file="PkgA/F3.lean",
-            range_start_line=1,
+            range_start_line=3,
             range_start_col=1,
-            range_end_line=1,
-            range_end_col=1,
+            range_end_line=3,
+            range_end_col=10,  # Added range
             scaled_pagerank_score=0.3,
+            docstring="doc3",
+            informal_description="informal3",
         )
 
         db_session.add_all([decl1, sg1, decl2, sg2, decl3, sg3])
@@ -699,6 +708,7 @@ class TestPerformSearch:
                 faiss_k=3,
                 pagerank_weight=0.5,
                 text_relevance_weight=0.5,
+                name_match_weight=0.0,
                 semantic_similarity_threshold=0.5,
                 log_searches=True,
             )
@@ -747,7 +757,7 @@ class TestPerformSearch:
             range_start_line=1,
             range_start_col=1,
             range_end_line=1,
-            range_end_col=1,
+            range_end_col=20,  # Added range
             scaled_pagerank_score=0.9,
         )
         decl2 = Declaration(id=2, lean_name="Std.SG2.name", decl_type="def")
@@ -761,7 +771,7 @@ class TestPerformSearch:
             range_start_line=1,
             range_start_col=1,
             range_end_line=1,
-            range_end_col=1,
+            range_end_col=20,  # Added range
             scaled_pagerank_score=0.8,
         )
         decl3 = Declaration(id=3, lean_name="MyProj.SG3.name", decl_type="def")
@@ -775,7 +785,7 @@ class TestPerformSearch:
             range_start_line=1,
             range_start_col=1,
             range_end_line=1,
-            range_end_col=1,
+            range_end_col=20,  # Added range
             scaled_pagerank_score=0.7,
         )
 
@@ -792,85 +802,125 @@ class TestPerformSearch:
                 faiss_k=3,
                 pagerank_weight=0.1,
                 text_relevance_weight=0.1,
+                name_match_weight=0.0,
                 log_searches=True,
                 selected_packages=["Mathlib"],
             )
         assert len(results) == 1
         assert results[0][0].id == 1
         assert "Filtering search by packages: ['Mathlib']" in caplog.text
+        expected_oversampling_log = (
+            f"Package filter active. Using oversampled FAISS K: "
+            f"{3 * defaults.DEFAULT_FAISS_OVERSAMPLING_FACTOR} "
+            f"(base K: 3, factor: {defaults.DEFAULT_FAISS_OVERSAMPLING_FACTOR})"
+        )
+        assert expected_oversampling_log in caplog.text
         assert any(
             call.kwargs["status"] == "SUCCESS"
             for call in mock_search_dependencies["log_event"].call_args_list
         )
 
+    @patch("lean_explore.local.search.PorterStemmer")
+    @patch("lean_explore.local.search.BM25Plus")
     def test_full_scoring_and_ranking(
         self,
+        mock_bm25plus_class: MagicMock,
+        mock_porter_stemmer_class: MagicMock,
         db_session: SQLAlchemySession,
         mock_search_dependencies: Dict[str, MagicMock],
         caplog: pytest.LogCaptureFixture,
     ):
-        """Tests the combination of similarity and PageRank for ranking.
+        """Tests the combination of similarity, PageRank, and BM25 for ranking.
 
         Args:
+            mock_bm25plus_class: Mock for the BM25Plus class.
+            mock_porter_stemmer_class: Mock for the PorterStemmer class.
             db_session: SQLAlchemy session fixture.
             mock_search_dependencies: Fixture providing common mocks.
             caplog: Pytest fixture to capture log output.
         """
+        mock_stemmer_instance = MagicMock()
+        mock_stemmer_instance.stem.side_effect = lambda token: token
+        mock_porter_stemmer_class.return_value = mock_stemmer_instance
+
+        mock_bm25_model_instance = MagicMock()
+        mock_bm25_model_instance.get_scores.return_value = np.array([0.8, 0.5, 0.2])
+        mock_bm25plus_class.return_value = mock_bm25_model_instance
+
         mock_faiss_index = mock_search_dependencies["faiss_index"]
         mock_faiss_index.metric_type = faiss.METRIC_INNER_PRODUCT
         mock_faiss_index.search.return_value = (
-            np.array([[0.8, 0.7, 0.6]]),  # Raw similarities
-            np.array([[0, 1, 2]]),  # FAISS indices
+            np.array([[0.8, 0.7, 0.6]]),
+            np.array([[0, 1, 2]]),
         )
         text_chunk_id_map = ["sg_1", "sg_2", "sg_3"]
 
-        decl1 = Declaration(id=1, lean_name="Target1.def", decl_type="def")
+        decl1 = Declaration(
+            id=1,
+            lean_name="Target1.def",
+            decl_type="def",
+            source_file="Mathlib/T1.lean",
+        )
         sg1 = StatementGroup(
             id=1,
             primary_decl_id=1,
             primary_declaration=decl1,
             text_hash="h1",
-            statement_text="text1",
+            statement_text="text1 about Target1",
             source_file="Mathlib/T1.lean",
-            range_start_line=1,
-            range_start_col=1,
-            range_end_line=1,
-            range_end_col=1,
-            scaled_pagerank_score=0.1,  # Low PR
+            scaled_pagerank_score=0.1,
+            docstring="doc for Target1",
+            display_statement_text="def Target1",
+            range_start_line=10,
+            range_start_col=2,
+            range_end_line=12,
+            range_end_col=5,  # Added range
         )
-        decl2 = Declaration(id=2, lean_name="Something.Else.Target2", decl_type="def")
+        decl2 = Declaration(
+            id=2,
+            lean_name="Something.Else.Target2",
+            decl_type="def",
+            source_file="Mathlib/T2.lean",
+        )
         sg2 = StatementGroup(
             id=2,
             primary_decl_id=2,
             primary_declaration=decl2,
             text_hash="h2",
-            statement_text="text2",
+            statement_text="text2 unrelated",
             source_file="Mathlib/T2.lean",
-            range_start_line=1,
-            range_start_col=1,
-            range_end_line=1,
-            range_end_col=1,
-            scaled_pagerank_score=0.8,  # High PR
+            scaled_pagerank_score=0.8,
+            docstring="doc for Target2",
+            display_statement_text="def Target2",
+            range_start_line=20,
+            range_start_col=2,
+            range_end_line=22,
+            range_end_col=5,  # Added range
         )
-        decl3 = Declaration(id=3, lean_name="Generic.Name", decl_type="def")
+        decl3 = Declaration(
+            id=3,
+            lean_name="Generic.Name",
+            decl_type="def",
+            source_file="Mathlib/T3.lean",
+        )
         sg3 = StatementGroup(
             id=3,
             primary_decl_id=3,
             primary_declaration=decl3,
             text_hash="h3",
-            statement_text="text3",
+            statement_text="text3 generic",
             source_file="Mathlib/T3.lean",
-            range_start_line=1,
-            range_start_col=1,
-            range_end_line=1,
-            range_end_col=1,
             scaled_pagerank_score=0.5,
+            docstring="doc for Generic",
+            display_statement_text="def Generic",
+            range_start_line=30,
+            range_start_col=2,
+            range_end_line=32,
+            range_end_col=5,  # Added range
         )
-
         db_session.add_all([decl1, sg1, decl2, sg2, decl3, sg3])
         db_session.commit()
 
-        # Weights: text relevance (sem_sim) = 0.6, pagerank = 0.3
         results = search_module.perform_search(
             session=db_session,
             query_string="query Target1",
@@ -880,47 +930,39 @@ class TestPerformSearch:
             faiss_k=3,
             pagerank_weight=0.3,
             text_relevance_weight=0.6,
+            name_match_weight=defaults.DEFAULT_NAME_MATCH_WEIGHT,
             log_searches=True,
             semantic_similarity_threshold=0.0,
         )
 
-        # Raw similarities from FAISS: [0.8, 0.7, 0.6] -> Normalized: [1.0, 0.5, 0.0]
-        # PageRank: SG1=0.1, SG2=0.8, SG3=0.5
-
-        # Expected scores for SG1 (raw_sim=0.8, norm_sim=1.0, pr=0.1)
-        # Final = (0.6 * 1.0) + (0.3 * 0.1) = 0.6 + 0.03 = 0.63
-
-        # Expected scores for SG2 (raw_sim=0.7, norm_sim=0.5, pr=0.8)
-        # Final = (0.6 * 0.5) + (0.3 * 0.8) = 0.3 + 0.24 = 0.54
-
-        # Expected scores for SG3 (raw_sim=0.6, norm_sim=0.0, pr=0.5)
-        # Final = (0.6 * 0.0) + (0.3 * 0.5) = 0.0 + 0.15 = 0.15
-
         assert len(results) == 3
-
-        # Check order and approximate scores
         assert results[0][0].id == 1
-        assert results[0][1]["final_score"] == pytest.approx(0.63)
+        assert results[0][1]["final_score"] == pytest.approx(1.6)
         assert results[0][1]["norm_similarity"] == pytest.approx(1.0)
-        assert results[0][1]["scaled_pagerank"] == pytest.approx(0.1)
-        assert "raw_name_match_score" not in results[0][1]
+        assert results[0][1]["scaled_pagerank"] == pytest.approx(0.0)
+        assert results[0][1]["norm_word_match_score"] == pytest.approx(1.0)
+        assert results[0][1]["raw_word_match_score"] == pytest.approx(0.8)
 
         assert results[1][0].id == 2
-        assert results[1][1]["final_score"] == pytest.approx(0.54)
+        assert results[1][1]["final_score"] == pytest.approx(1.1)
         assert results[1][1]["norm_similarity"] == pytest.approx(0.5)
-        assert results[1][1]["scaled_pagerank"] == pytest.approx(0.8)
-        assert "raw_name_match_score" not in results[1][1]
+        assert results[1][1]["scaled_pagerank"] == pytest.approx(1.0)
+        assert results[1][1]["norm_word_match_score"] == pytest.approx(0.5)
+        assert results[1][1]["raw_word_match_score"] == pytest.approx(0.5)
 
         assert results[2][0].id == 3
-        assert results[2][1]["final_score"] == pytest.approx(0.15)
+        assert results[2][1]["final_score"] == pytest.approx(0.17142, abs=1e-4)
         assert results[2][1]["norm_similarity"] == pytest.approx(0.0)
-        assert results[2][1]["scaled_pagerank"] == pytest.approx(0.5)
-        assert "raw_name_match_score" not in results[2][1]
+        assert results[2][1]["scaled_pagerank"] == pytest.approx(0.57142, abs=1e-4)
+        assert results[2][1]["norm_word_match_score"] == pytest.approx(0.0)
+        assert results[2][1]["raw_word_match_score"] == pytest.approx(0.2)
 
         assert any(
             call.kwargs["status"] == "SUCCESS"
             for call in mock_search_dependencies["log_event"].call_args_list
         )
+        mock_porter_stemmer_class.assert_called_once()
+        mock_bm25plus_class.assert_called_once()
 
 
 # --- Tests for CLI Aspects (parse_arguments and main) ---
@@ -981,6 +1023,7 @@ class TestSearchScriptCLI:
         mock_print_results: MagicMock,
         isolated_data_paths: pathlib.Path,
         caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,  # Added monkeypatch
     ):
         """Tests the main execution flow for a successful search.
 
@@ -994,6 +1037,7 @@ class TestSearchScriptCLI:
             mock_print_results: Mock for `print_results`.
             isolated_data_paths: Fixture to isolate default paths.
             caplog: Pytest fixture to capture log output.
+            monkeypatch: Pytest fixture for modifying object attributes.
         """
         mock_args = MagicMock(spec=argparse.Namespace)
         mock_args.query = "test query"
@@ -1023,7 +1067,18 @@ class TestSearchScriptCLI:
         ]
         mock_perform_search.return_value = ranked_results_fixture
 
+        defaults.DEFAULT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         defaults.DEFAULT_DB_PATH.touch()
+
+        # Patch search_module._USER_LOGS_BASE_DIR to use the isolated path
+        # This ensures mkdir in main() uses the correct temporary directory
+        # derived from the already patched defaults.LEAN_EXPLORE_USER_DATA_DIR
+        expected_user_logs_base_dir = (
+            defaults.LEAN_EXPLORE_USER_DATA_DIR.parent / "logs"
+        )
+        monkeypatch.setattr(
+            search_module, "_USER_LOGS_BASE_DIR", expected_user_logs_base_dir
+        )
 
         with caplog.at_level(logging.INFO):
             search_module.main()
@@ -1049,13 +1104,15 @@ class TestSearchScriptCLI:
             selected_packages=mock_args.packages,
             semantic_similarity_threshold=defaults.DEFAULT_SEM_SIM_THRESHOLD,
             faiss_nprobe=defaults.DEFAULT_FAISS_NPROBE,
+            name_match_weight=defaults.DEFAULT_NAME_MATCH_WEIGHT,
+            faiss_oversampling_factor=defaults.DEFAULT_FAISS_OVERSAMPLING_FACTOR,
         )
         mock_print_results.assert_called_once_with(
             ranked_results_fixture[: mock_args.limit]
         )
 
         assert "Starting Search (Direct Script Execution)" in caplog.text
-        assert (search_module._USER_LOGS_BASE_DIR).exists()
+        assert expected_user_logs_base_dir.exists()
 
     @patch.object(search_module, "sys")
     @patch.object(search_module, "load_embedding_model")

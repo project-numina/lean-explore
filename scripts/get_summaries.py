@@ -635,9 +635,7 @@ async def generate_summaries_for_statement_groups(
             logger.info("---------------------------------------------------")
 
     if is_test_mode:
-        final_processed_count = (
-            pbar.n if pbar and pbar.n > 0 else processed_items_count
-        )
+        final_processed_count = pbar.n if pbar and pbar.n > 0 else processed_items_count
         logger.info(
             "Summary Test mode finished. Attempted %d items (limit was %d). "
             "Successes: %d, Failures: %d.",
@@ -696,10 +694,7 @@ def parse_arguments() -> argparse.Namespace:
         "--db-url",
         type=str,
         default=DEFAULT_DATABASE_URL,
-        help=(
-            "SQLAlchemy database URL. "
-            f"(default: {DEFAULT_DATABASE_URL})"
-        )
+        help=(f"SQLAlchemy database URL. (default: {DEFAULT_DATABASE_URL})"),
     )
     parser.add_argument(
         "--test",

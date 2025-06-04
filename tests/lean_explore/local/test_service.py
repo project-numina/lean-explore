@@ -1,4 +1,5 @@
 # tests/local/test_service.py
+
 """Tests for the lean_explore.local.service.Service class.
 
 This module focuses on testing the initialization and core functionalities
@@ -86,12 +87,17 @@ class TestServiceInitialization:
             service.default_text_relevance_weight
             == defaults.DEFAULT_TEXT_RELEVANCE_WEIGHT
         )
+        assert service.default_name_match_weight == defaults.DEFAULT_NAME_MATCH_WEIGHT
         assert (
             service.default_semantic_similarity_threshold
             == defaults.DEFAULT_SEM_SIM_THRESHOLD
         )
         assert service.default_results_limit == defaults.DEFAULT_RESULTS_LIMIT
         assert service.default_faiss_nprobe == defaults.DEFAULT_FAISS_NPROBE
+        assert (
+            service.default_faiss_oversampling_factor
+            == defaults.DEFAULT_FAISS_OVERSAMPLING_FACTOR
+        )
 
         mock_load_embedding_model.assert_called_once_with(
             defaults.DEFAULT_EMBEDDING_MODEL_NAME
@@ -237,7 +243,8 @@ class TestServiceInitialization:
         The `isolated_data_paths` fixture already creates the toolchain base
         directory. The `mkdir(parents=True, exist_ok=True)` call in
         `Service.__init__` should not raise an error. This test confirms
-        that no error log regarding this directory creation appears.
+        that no error log regarding this directory creation appears and the
+        expected info log is present.
 
         Args:
             isolated_data_paths: Fixture redirecting default data paths.
@@ -344,8 +351,7 @@ class TestServiceMethods:
         """
         mock_sg_orm = MagicMock(spec=StatementGroup)
         mock_sg_orm.id = 2
-        mock_sg_orm.primary_declaration = None  # Simulate no primary declaration
-        # Set other required fields for APISearchResultItem
+        mock_sg_orm.primary_declaration = None
         mock_sg_orm.source_file = "Another.lean"
         mock_sg_orm.range_start_line = 1
         mock_sg_orm.statement_text = "some text"
@@ -369,7 +375,6 @@ class TestServiceMethods:
             db_session: An in-memory SQLite session with schema created.
             mocker: Pytest-mock's mocker fixture.
         """
-        # Populate the in-memory DB
         decl = Declaration(id=1, lean_name="Nat.zero", decl_type="axiom")
         sg = StatementGroup(
             id=101,
@@ -386,7 +391,6 @@ class TestServiceMethods:
         db_session.add_all([decl, sg])
         db_session.commit()
 
-        # Mock the service's SessionLocal to return our test db_session
         mocker.patch.object(
             initialized_service, "SessionLocal", return_value=db_session
         )
@@ -414,7 +418,7 @@ class TestServiceMethods:
         mocker.patch.object(
             initialized_service, "SessionLocal", return_value=db_session
         )
-        result = initialized_service.get_by_id(999)  # Non-existent ID
+        result = initialized_service.get_by_id(999)
         assert result is None
 
     def test_get_by_id_sqlalchemy_error(
@@ -428,19 +432,15 @@ class TestServiceMethods:
 
         Args:
             initialized_service: An initialized Service instance.
-            db_session: An in-memory SQLite session (unused directly here
-                as SessionLocal is mocked).
+            db_session: An in-memory SQLite session.
             mocker: Pytest-mock's mocker fixture.
             caplog: Pytest fixture to capture log output.
         """
         mock_session = mocker.MagicMock(spec=SQLAlchemySession)
-        # Configure the chain of calls on the mock_session to raise the error
-        # at .first()
         (
             mock_session.query.return_value.options.return_value.filter.return_value.first
         ).side_effect = SQLAlchemyError("DB query failed during get_by_id")
 
-        # Mock the SessionLocal context manager on the service instance
         mock_session_local_cm = mocker.MagicMock()
         mock_session_local_cm.__enter__.return_value = mock_session
         mock_session_local_cm.__exit__.return_value = None
@@ -469,7 +469,6 @@ class TestServiceMethods:
             db_session: An in-memory SQLite session.
             mocker: Pytest-mock's mocker fixture.
         """
-        # Populate DB
         decl1 = Declaration(id=1, lean_name="Nat.succ", decl_type="def")
         decl2 = Declaration(id=2, lean_name="Nat.zero", decl_type="axiom")
         sg_source = StatementGroup(
@@ -530,7 +529,7 @@ class TestServiceMethods:
         mocker.patch.object(
             initialized_service, "SessionLocal", return_value=db_session
         )
-        result = initialized_service.get_dependencies(999)  # Non-existent ID
+        result = initialized_service.get_dependencies(999)
         assert result is None
 
     def test_get_dependencies_no_dependencies(
@@ -582,7 +581,6 @@ class TestServiceMethods:
         and wrapping the output in `APISearchResponse`.
 
         Args:
-            mock_perform_search: Mock for `lean_explore.local.service.perform_search`.
             initialized_service: An initialized Service instance.
             mocker: Pytest-mock's mocker fixture.
         """
@@ -618,12 +616,10 @@ class TestServiceMethods:
         ]
         mock_perform_search.return_value = mock_perform_search_results
 
-        # Mock the SessionLocal context manager on the service instance
         mock_session = mocker.MagicMock(spec=SQLAlchemySession)
         mock_session_local_cm = mocker.MagicMock()
         mock_session_local_cm.__enter__.return_value = mock_session
         mock_session_local_cm.__exit__.return_value = None
-        # Patch SessionLocal on the specific service instance for this test
         initialized_service.SessionLocal = lambda: mock_session_local_cm
 
         query_str = "test query"
@@ -636,13 +632,11 @@ class TestServiceMethods:
         assert isinstance(response, APISearchResponse)
         assert response.query == query_str
         assert response.packages_applied == pkgs
-        assert response.count == limit  # Count after tool's limit
+        assert response.count == limit
         assert len(response.results) == limit
         assert response.results[0].id == mock_sg_orm1.id
         assert response.results[0].primary_declaration.lean_name == "Res1"
-        assert response.total_candidates_considered == len(
-            mock_perform_search_results
-        )  # Before limit
+        assert response.total_candidates_considered == len(mock_perform_search_results)
         assert response.processing_time_ms >= 0
 
         mock_perform_search.assert_called_once_with(
@@ -654,10 +648,12 @@ class TestServiceMethods:
             faiss_k=initialized_service.default_faiss_k,
             pagerank_weight=initialized_service.default_pagerank_weight,
             text_relevance_weight=initialized_service.default_text_relevance_weight,
+            name_match_weight=initialized_service.default_name_match_weight,
             log_searches=True,
             selected_packages=pkgs,
             semantic_similarity_threshold=initialized_service.default_semantic_similarity_threshold,
             faiss_nprobe=initialized_service.default_faiss_nprobe,
+            faiss_oversampling_factor=initialized_service.default_faiss_oversampling_factor,
         )
 
     def test_search_perform_search_raises_exception(
@@ -666,7 +662,6 @@ class TestServiceMethods:
         """Tests that Service.search re-raises exceptions from perform_search.
 
         Args:
-            mock_perform_search: Mock for `lean_explore.local.service.perform_search`.
             initialized_service: An initialized Service instance.
             mocker: Pytest-mock's mocker fixture.
         """
@@ -690,10 +685,6 @@ class TestServiceMethods:
         Args:
             initialized_service: An initialized Service instance.
         """
-        # Simulate a scenario where __init__ might have "succeeded" (due to mocks)
-        # but a critical asset became None afterwards.
-        initialized_service.embedding_model = (
-            None  # Tamper with the initialized service
-        )
+        initialized_service.embedding_model = None
         with pytest.raises(RuntimeError, match="Search service assets not loaded"):
             initialized_service.search(query="any")

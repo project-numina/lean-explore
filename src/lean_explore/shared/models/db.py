@@ -21,7 +21,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Text,
-    UniqueConstraint,  # Kept for potential standalone model testing
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -65,6 +65,8 @@ class StatementGroup(Base):
         docstring: Docstring associated with this code block, typically from the
             primary declaration.
         informal_description: Optional informal English description, potentially
+            LLM-generated.
+        informal_summary: Optional informal English summary, potentially
             LLM-generated.
         source_file: Relative path to the .lean file containing this block.
         range_start_line: Starting line number of the block in the source file.
@@ -170,9 +172,8 @@ class Declaration(Base):
     """Represents a Lean declaration, a node in the dependency graph.
 
     Stores information about Lean declarations (definitions, theorems, axioms, etc.),
-    including source location, Lean code, descriptions, and (potentially)
-    embeddings. Declarations from the same source block can be grouped via
-    `statement_group_id`.
+    including source location, Lean code, and descriptions. Declarations from the
+    same source block can be grouped via `statement_group_id`.
 
     Attributes:
         id: Primary key identifier.
@@ -192,13 +193,6 @@ class Declaration(Base):
         statement_text: Full Lean code text of the originating source block.
         declaration_signature: Extracted Lean signature text of the declaration.
         statement_group_id: Optional foreign key to `statement_groups.id`.
-        type_signature_text: Lean type signature (may be redundant with
-            `declaration_signature`).
-        informal_description: Informal English explanation.
-        lean_embedding: Text representation (e.g., JSON) of the embedding for
-            Lean code.
-        informal_description_embedding: Text representation (e.g., JSON) of the
-            embedding for the informal description.
         pagerank_score: PageRank score within the dependency graph, indexed.
         created_at: Timestamp of record creation.
         updated_at: Timestamp of last record update.
@@ -231,14 +225,6 @@ class Declaration(Base):
 
     statement_group_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("statement_groups.id"), nullable=True, index=True
-    )
-
-    type_signature_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    informal_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    lean_embedding: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    informal_description_embedding: Mapped[Optional[str]] = mapped_column(
-        Text, nullable=True
     )
 
     pagerank_score: Mapped[Optional[float]] = mapped_column(
@@ -292,7 +278,6 @@ class Dependency(Base):
         source_decl_id: Foreign key to the `Declaration` that depends on another.
         target_decl_id: Foreign key to the `Declaration` that is depended upon.
         dependency_type: String describing the type of dependency (e.g., 'Direct').
-        context: Optional string providing context for the dependency.
         created_at: Timestamp of record creation.
     """
 
@@ -312,7 +297,6 @@ class Dependency(Base):
         index=True,
     )
     dependency_type: Mapped[str] = mapped_column(String(30), nullable=False)
-    context: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, default=datetime.datetime.utcnow, nullable=False
@@ -392,7 +376,7 @@ class StatementGroupDependency(Base):
         UniqueConstraint(
             "source_statement_group_id",
             "target_statement_group_id",
-            "dependency_type",  # Consider if type is part of uniqueness
+            "dependency_type",
             name="uq_stmt_group_dependency_link",
         ),
         Index(

@@ -5,6 +5,7 @@
 This module includes functions to fetch toolchain data (database, FAISS index, etc.)
 from a remote source (Cloudflare R2), verify its integrity, decompress it,
 and place it in the appropriate local directory for the application to use.
+It also provides a command to clean up this downloaded data.
 """
 
 import gzip
@@ -32,7 +33,7 @@ from lean_explore import defaults  # For R2 URLs and local paths
 app = typer.Typer(
     name="data",
     help="Manage local data toolchains for Lean Explore (e.g., download, list, "
-    "select).",
+    "select, clean).",
     no_args_is_help=True,
 )
 
@@ -167,10 +168,6 @@ def _download_file_with_progress(
                         "reported size for progress bar if available, otherwise "
                         "expected size.[/yellow]"
                     )
-                # Prefer expected_size_bytes if it's provided and server doesn't send
-                # Content-Length or if we want to strictly adhere to manifest size for
-                # progress. However, for live progress, server's content-length is
-                # usually more accurate for what's being transferred.
                 if (
                     total_size_from_header == 0
                 ):  # If server didn't provide content-length
@@ -201,13 +198,11 @@ def _download_file_with_progress(
         finally:
             r.close()
 
-        # Sanity check after download
         actual_downloaded_size = destination_path.stat().st_size
         if (
             total_size_from_header > 0
             and actual_downloaded_size != total_size_from_header
         ):
-            # This might indicate an incomplete download if not all bytes were written.
             console.print(
                 f"[orange3]Warning: For [cyan]{description}[/cyan], downloaded size "
                 f"({actual_downloaded_size} bytes) differs from Content-Length header "
@@ -258,7 +253,6 @@ def _verify_sha256_checksum(file_path: pathlib.Path, expected_checksum: str) -> 
     sha256_hash = hashlib.sha256()
     try:
         with open(file_path, "rb") as f:
-            # Read and update hash string value in blocks of 4K
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
         calculated_checksum = sha256_hash.hexdigest()
@@ -328,28 +322,18 @@ def main() -> None:
 
 
 @app.command()
-def fetch(
-    version: str = typer.Argument(
-        None,
-        help=(
-            "The toolchain version to fetch (e.g., 'stable', '0.1.0'). "
-            "'stable' will attempt to use the 'default_toolchain' from the manifest."
-        ),
-        show_default=False,
-    ),
-) -> None:
-    """Fetches and installs a specified data version from the remote repository.
+def fetch() -> None:
+    """Fetches and installs the default data toolchain from the remote repository.
 
-    Downloads necessary assets like the database and FAISS index, verifies their
-    integrity via SHA256 checksums, decompresses them, and places them into the
-    appropriate local directory (e.g., ~/.lean_explore/data/toolchains/<version>/).
+    This command identifies the 'default_toolchain' (often aliased as 'stable')
+    from the remote manifest, then downloads necessary assets like the database
+    and FAISS index. It verifies their integrity via SHA256 checksums,
+    decompresses them, and places them into the appropriate local versioned
+    directory (e.g., ~/.lean_explore/data/toolchains/<default_version>/).
     """
-    console.rule(
-        f"[bold blue]Fetching Lean Explore Data Toolchain: {version}[/bold blue]"
-    )
+    console.rule("[bold blue]Fetching Default Lean Explore Data Toolchain[/bold blue]")
 
-    if version is None:
-        version = "stable"
+    version_to_request = "stable"  # Always fetch the stable/default version
 
     # 1. Fetch and Parse Manifest
     console.print(f"Fetching data manifest from {defaults.R2_MANIFEST_DEFAULT_URL}...")
@@ -362,12 +346,12 @@ def fetch(
     console.print("[green]Manifest fetched successfully.[/green]")
 
     # 2. Resolve Target Version from Manifest
-    version_info = _resolve_toolchain_version_info(manifest_data, version)
+    version_info = _resolve_toolchain_version_info(manifest_data, version_to_request)
     if not version_info:
         # _resolve_toolchain_version_info already prints detailed errors
         raise typer.Exit(code=1)
 
-    resolved_version_key = version_info["_resolved_key"]  # Key like "0.1.0"
+    resolved_version_key = version_info["_resolved_key"]  # Key like "0.1.0" or "0.2.0"
     console.print(
         f"Processing toolchain version: [bold yellow]{resolved_version_key}"
         "[/bold yellow] "
@@ -400,12 +384,8 @@ def fetch(
         local_name = file_entry.get("local_name")
         remote_name = file_entry.get("remote_name")
         expected_checksum = file_entry.get("sha256")
-        expected_size_compressed = file_entry.get(
-            "size_bytes_compressed"
-        )  # This is size of .gz
-        assets_r2_path_prefix = version_info.get(
-            "assets_base_path_r2", ""
-        )  # e.g., "assets/0.1.0/"
+        expected_size_compressed = file_entry.get("size_bytes_compressed")
+        assets_r2_path_prefix = version_info.get("assets_base_path_r2", "")
 
         if not all([local_name, remote_name, expected_checksum]):
             console.print(
@@ -418,7 +398,7 @@ def fetch(
         console.rule(f"[bold cyan]Processing: {local_name}[/bold cyan]")
 
         final_local_path = local_version_dir / local_name
-        temp_download_path = local_version_dir / remote_name  # Path for the .gz file
+        temp_download_path = local_version_dir / remote_name
 
         remote_url = (
             defaults.R2_ASSETS_BASE_URL.rstrip("/")
@@ -473,9 +453,7 @@ def fetch(
             )
             if final_local_path.exists():
                 final_local_path.unlink(missing_ok=True)
-            if (
-                temp_download_path.exists()
-            ):  # Ensure .gz is also removed on decompress failure
+            if temp_download_path.exists():
                 temp_download_path.unlink(missing_ok=True)
             continue
 
@@ -500,7 +478,87 @@ def fetch(
         raise typer.Exit(code=1)
 
 
+@app.command("clean")
+def clean_data_toolchains() -> None:
+    """Removes all downloaded local data toolchains.
+
+    This command deletes all version-specific subdirectories and their contents
+    within the local toolchains storage directory (typically located at
+    ~/.lean_explore/data/toolchains/).
+
+    Configuration files will not be affected.
+    """
+    toolchains_dir = defaults.LEAN_EXPLORE_TOOLCHAINS_BASE_DIR
+    console.print(
+        f"Attempting to clean local data toolchains from: [dim]{toolchains_dir}[/dim]"
+    )
+
+    if not toolchains_dir.exists() or not any(toolchains_dir.iterdir()):
+        console.print("[yellow]No local toolchain data found to clean.[/yellow]")
+        raise typer.Exit(code=0)
+
+    console.print(
+        "[bold yellow]\nThis will delete all downloaded database files and other "
+        "toolchain assets stored locally.[/bold yellow]"
+    )
+    if not typer.confirm(
+        "Are you sure you want to proceed?",
+        default=False,
+        abort=True,  # Typer will exit if user chooses 'no' (the default)
+    ):
+        # This line is effectively not reached if user aborts.
+        # Kept for logical structure understanding, but Typer handles the abort.
+        return
+
+    console.print(f"\nCleaning data from {toolchains_dir}...")
+    deleted_items_count = 0
+    errors_encountered = False
+    try:
+        for item_path in toolchains_dir.iterdir():
+            try:
+                if item_path.is_dir():
+                    shutil.rmtree(item_path)
+                    console.print(f"  Removed directory: [dim]{item_path.name}[/dim]")
+                    deleted_items_count += 1
+                elif item_path.is_file():  # Handle stray files if any
+                    item_path.unlink()
+                    console.print(f"  Removed file: [dim]{item_path.name}[/dim]")
+                    deleted_items_count += 1
+            except OSError as e:
+                console.print(
+                    f"[bold red]  Error removing {item_path.name}: {e}[/bold red]"
+                )
+                errors_encountered = True
+
+        console.print("")  # Add a newline for better formatting after item list
+
+        if errors_encountered:
+            console.print(
+                "[bold orange3]Data cleaning process completed with some errors. "
+                "Please review messages above.[/bold orange3]"
+            )
+            raise typer.Exit(code=1)
+        elif deleted_items_count > 0:
+            console.print(
+                "[bold green]All local toolchain data has been successfully "
+                "cleaned.[/bold green]"
+            )
+        else:
+            # This case might occur if the directory contained no items
+            # that were directories or files, or if it became empty
+            # between the initial check and this point.
+            console.print(
+                "[yellow]No items were deleted. The toolchain directory might "
+                "have been empty or contained unexpected item types.[/yellow]"
+            )
+
+    except OSError as e:  # Error iterating the directory itself
+        console.print(
+            f"[bold red]An error occurred while accessing toolchain directory "
+            f"for cleaning: {e}[/bold red]"
+        )
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
-    # This allows testing `python -m lean_explore.cli.data_commands fetch stable`
-    # For actual CLI use, this app will be mounted in `main.py`.
     app()

@@ -19,12 +19,10 @@ import pathlib
 import sys
 import time
 
-# --- Dependency Imports ---
 try:
     import faiss
     import numpy as np
 except ImportError as e:
-    # pylint: disable=broad-exception-raised
     print(
         f"Error: Missing required libraries ({e}).\n"
         "Please install them by running: pip install numpy faiss-cpu\n"
@@ -33,7 +31,6 @@ except ImportError as e:
     )
     sys.exit(1)
 
-# --- Logging Setup ---
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s",
@@ -41,7 +38,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Constants ---
 DEFAULT_OUTPUT_INDEX_FILE = "main_faiss.index"
 DEFAULT_OUTPUT_MAP_FILE = "faiss_ids_map.json"
 DEFAULT_FAISS_INDEX_TYPE = "IndexFlatL2"
@@ -49,7 +45,7 @@ DEFAULT_IVF_NLIST = 100
 DEFAULT_GPU_DEVICE = 0
 
 
-def build_and_save_index( # pylint: disable=too-many-locals, too-many-statements, too-many-branches
+def build_and_save_index(
     input_npz_path: pathlib.Path,
     output_index_path: pathlib.Path,
     output_map_path: pathlib.Path,
@@ -141,7 +137,6 @@ def build_and_save_index( # pylint: disable=too-many-locals, too-many-statements
         )
         embeddings_matrix = embeddings_matrix.astype(np.float32)
 
-    # Determine GPU availability and effective usage
     gpu_available_count = 0
     try:
         gpu_available_count = faiss.get_num_gpus()
@@ -180,10 +175,10 @@ def build_and_save_index( # pylint: disable=too-many-locals, too-many-statements
     else:
         logger.info("No FAISS-compatible GPU detected or available. Using CPU.")
 
-    # Create the base CPU index structure
-    # This 'cpu_faiss_index' serves as the blueprint and fallback.
-    cpu_faiss_index: faiss.Index 
-    logger.info("Initializing base CPU FAISS index structure of type: %s", faiss_index_type)
+    cpu_faiss_index: faiss.Index
+    logger.info(
+        "Initializing base CPU FAISS index structure of type: %s", faiss_index_type
+    )
     try:
         if faiss_index_type == "IndexFlatL2":
             cpu_faiss_index = faiss.IndexFlatL2(dimension)
@@ -195,9 +190,9 @@ def build_and_save_index( # pylint: disable=too-many-locals, too-many-statements
             cpu_faiss_index = faiss.IndexFlatIP(dimension)
         elif faiss_index_type == "IndexIVFFlat":
             nlist_actual = ivf_nlist
-            min_points_for_train = nlist_actual * 39 # FAISS heuristic
+            min_points_for_train = nlist_actual * 39
             if num_embeddings > 0 and num_embeddings < min_points_for_train:
-                nlist_suggested = max(1, int(np.sqrt(num_embeddings) / 2)) # Basic heuristic
+                nlist_suggested = max(1, int(np.sqrt(num_embeddings) / 2))
                 if nlist_suggested < nlist_actual:
                     logger.warning(
                         "Number of embeddings (%d) is low for the specified "
@@ -209,7 +204,7 @@ def build_and_save_index( # pylint: disable=too-many-locals, too-many-statements
                         min_points_for_train,
                         nlist_suggested,
                     )
-            quantizer = faiss.IndexFlatL2(dimension) # Default L2 quantizer
+            quantizer = faiss.IndexFlatL2(dimension)
             cpu_faiss_index = faiss.IndexIVFFlat(
                 quantizer, dimension, nlist_actual, faiss.METRIC_L2
             )
@@ -217,32 +212,34 @@ def build_and_save_index( # pylint: disable=too-many-locals, too-many-statements
             logger.error("Unsupported FAISS index type specified: %s", faiss_index_type)
             sys.exit(1)
     except Exception as e_init:
-        logger.error("Error initializing FAISS index structure: %s", e_init, exc_info=True)
+        logger.error(
+            "Error initializing FAISS index structure: %s", e_init, exc_info=True
+        )
         sys.exit(1)
 
-    # This will hold the final index to be saved, after CPU or GPU processing.
     final_index_to_save = cpu_faiss_index
     gpu_processing_successful = False
-    
+
     if effective_use_gpu:
         gpu_resources = None
         cloned_gpu_index = None
         try:
             logger.info(
                 "Attempting to use GPU device %d for FAISS operations.",
-                actual_gpu_device
+                actual_gpu_device,
             )
             gpu_resources = faiss.StandardGpuResources()
-            
-            logger.info(
-                "Cloning CPU index to GPU device %d...", actual_gpu_device
-            )
+
+            logger.info("Cloning CPU index to GPU device %d...", actual_gpu_device)
             cloned_gpu_index = faiss.index_cpu_to_gpu(
                 gpu_resources, actual_gpu_device, cpu_faiss_index
             )
             logger.info("Successfully cloned index to GPU.")
 
-            if hasattr(cloned_gpu_index, "is_trained") and not cloned_gpu_index.is_trained:
+            if (
+                hasattr(cloned_gpu_index, "is_trained")
+                and not cloned_gpu_index.is_trained
+            ):
                 logger.info(
                     "Training index on GPU %d with %d vectors...",
                     actual_gpu_device,
@@ -250,7 +247,7 @@ def build_and_save_index( # pylint: disable=too-many-locals, too-many-statements
                 )
                 cloned_gpu_index.train(embeddings_matrix)
                 logger.info("GPU training complete.")
-            
+
             if num_embeddings > 0:
                 logger.info(
                     "Adding %d embeddings to index on GPU %d...",
@@ -271,7 +268,7 @@ def build_and_save_index( # pylint: disable=too-many-locals, too-many-statements
             logger.info(
                 "Index successfully processed on GPU and moved to CPU. "
                 "Final ntotal: %d",
-                final_index_to_save.ntotal
+                final_index_to_save.ntotal,
             )
             gpu_processing_successful = True
 
@@ -281,14 +278,12 @@ def build_and_save_index( # pylint: disable=too-many-locals, too-many-statements
                 e_gpu,
                 exc_info=True,
             )
-            # Ensure we use the original, clean CPU index for fallback.
-            # If cpu_faiss_index was somehow modified (though index_cpu_to_gpu typically
-            # works on a GpuIndex proxy), resetting it ensures a clean state.
-            if hasattr(cpu_faiss_index, 'reset') and isinstance(cpu_faiss_index, faiss.IndexIVF):
+            if hasattr(cpu_faiss_index, "reset") and isinstance(
+                cpu_faiss_index, faiss.IndexIVF
+            ):
                 logger.info("Resetting original CPU IVF index for clean CPU fallback.")
-                cpu_faiss_index.reset() # Resets an IVF index to untrained, empty state.
-                                        # For Flat indexes, reset might not exist or be needed.
-            final_index_to_save = cpu_faiss_index # Fallback to original CPU index.
+                cpu_faiss_index.reset()
+            final_index_to_save = cpu_faiss_index
         finally:
             if cloned_gpu_index is not None:
                 del cloned_gpu_index
@@ -296,54 +291,55 @@ def build_and_save_index( # pylint: disable=too-many-locals, too-many-statements
                 del gpu_resources
             logger.debug("GPU resources (if any) have been released.")
 
-
     if not gpu_processing_successful:
         logger.info("Processing FAISS index on CPU...")
-        final_index_to_save = cpu_faiss_index # Ensure we are using the CPU index
+        final_index_to_save = cpu_faiss_index
 
-        if hasattr(final_index_to_save, "is_trained") and \
-           not final_index_to_save.is_trained:
-            if num_embeddings > 0 : # Only train if there's data
-                logger.info(
-                    "Training index on CPU with %d vectors...", num_embeddings
-                )
+        if (
+            hasattr(final_index_to_save, "is_trained")
+            and not final_index_to_save.is_trained
+        ):
+            if num_embeddings > 0:
+                logger.info("Training index on CPU with %d vectors...", num_embeddings)
                 final_index_to_save.train(embeddings_matrix)
                 logger.info("CPU training complete.")
-            else: # num_embeddings == 0, IVF index cannot be trained.
-                 logger.warning(
-                    "No embeddings provided to train %s on CPU; index will be untrained.",
-                    faiss_index_type
+            else:
+                logger.warning(
+                    "No embeddings provided to train %s on CPU; index will be "
+                    "untrained.",
+                    faiss_index_type,
                 )
-        
+
         if num_embeddings > 0:
-            # Add if index is empty (e.g. GPU failed before add, or it's a fresh CPU path)
             if final_index_to_save.ntotal == 0:
-                logger.info(
-                    "Adding %d embeddings to index on CPU...", num_embeddings
-                )
+                logger.info("Adding %d embeddings to index on CPU...", num_embeddings)
                 final_index_to_save.add(embeddings_matrix)
                 logger.info(
                     "CPU adding complete. Index ntotal on CPU: %d",
                     final_index_to_save.ntotal,
                 )
-            # This condition handles if GPU train worked, index moved back, but GPU add failed.
-            # The index might be trained but still have 0 items.
-            elif final_index_to_save.ntotal != num_embeddings and \
-                 hasattr(final_index_to_save, "is_trained") and \
-                 final_index_to_save.is_trained:
+            elif (
+                final_index_to_save.ntotal != num_embeddings
+                and hasattr(final_index_to_save, "is_trained")
+                and final_index_to_save.is_trained
+            ):
                 logger.info(
                     "CPU index is trained but ntotal (%d) != num_embeddings (%d). "
                     "Attempting to add embeddings on CPU.",
-                    final_index_to_save.ntotal, num_embeddings
+                    final_index_to_save.ntotal,
+                    num_embeddings,
                 )
-                
-                logger.warning("This scenario (trained index, ntotal > 0 but != num_embeddings) "
-                               "during CPU fallback might indicate complex partial GPU failure. "
-                               "Proceeding with add, but verify index content if issues arise.")
 
-        elif num_embeddings == 0 : # No embeddings to add
-             logger.info("No embeddings to add to the index as the input matrix was empty.")
+                logger.warning(
+                    "This scenario (trained index, ntotal > 0 but != num_embeddings) "
+                    "during CPU fallback might indicate complex partial GPU failure. "
+                    "Proceeding with add, but verify index content if issues arise."
+                )
 
+        elif num_embeddings == 0:
+            logger.info(
+                "No embeddings to add to the index as the input matrix was empty."
+            )
 
     try:
         logger.info("Saving FAISS index to: %s", output_index_path.resolve())

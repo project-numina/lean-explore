@@ -5,7 +5,7 @@ database:
 llm:
   # --- Model Configuration ---
   # Google Gemini model for text generation.
-  generation_model: "gemini-2.0-flash" # Was gemini-1.0-pro, assuming update, kept what was in original user content
+  generation_model: "gemini-2.0-flash"
   # Google Gemini model for API-based text embeddings.
   # Note: Search uses a local sentence-transformer model specified in 'search' section.
   embedding_model: "models/text-embedding-004"
@@ -57,6 +57,8 @@ search:
   faiss_k: 100
   # For IVF-type FAISS indexes, number of closest cells/clusters to search.
   faiss_nprobe: 200
+  # Factor to multiply faiss_k by when package filters are active, to increase initial candidate pool.
+  faiss_oversampling_factor_for_packages: 3
   # Minimum raw semantic similarity score [0,1] for a result to be considered.
   semantic_similarity_threshold: 0.525
 
@@ -64,9 +66,9 @@ search:
   # Weight for PageRank score (graph centrality).
   pagerank_weight: 0.2
   # Weight for semantic similarity score (query relevance).
-  text_relevance_weight: 1
+  text_relevance_weight: 1.0
   # Name match weight
-  name_match_weight: 1
+  name_match_weight: 1.0
 
   # --- Output ---
   # Default number of final results to display.

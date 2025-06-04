@@ -56,6 +56,8 @@ class Service:
         default_semantic_similarity_threshold (float): Default similarity threshold.
         default_results_limit (int): Default limit for search results.
         default_faiss_nprobe (int): Default nprobe for FAISS IVF indexes.
+        default_faiss_oversampling_factor (int): Default oversampling factor for
+            FAISS when package filters are active.
     """
 
     def __init__(self):
@@ -135,9 +137,7 @@ class Service:
         try:
             self.engine = create_engine(db_url)
             # Test connection
-            with (
-                self.engine.connect()
-            ):
+            with self.engine.connect():  # type: ignore[attr-defined] # sqlalchemy stubs might be incomplete
                 logger.info("Database connection successful.")
             self.SessionLocal: sessionmaker[SQLAlchemySessionType] = sessionmaker(
                 autocommit=False, autoflush=False, bind=self.engine
@@ -179,6 +179,9 @@ class Service:
         )
         self.default_results_limit: int = defaults.DEFAULT_RESULTS_LIMIT
         self.default_faiss_nprobe: int = defaults.DEFAULT_FAISS_NPROBE
+        self.default_faiss_oversampling_factor: int = (
+            defaults.DEFAULT_FAISS_OVERSAMPLING_FACTOR
+        )
 
         logger.info("Local Service initialized successfully.")
 
@@ -262,6 +265,7 @@ class Service:
                         self.default_semantic_similarity_threshold
                     ),
                     faiss_nprobe=self.default_faiss_nprobe,
+                    faiss_oversampling_factor=self.default_faiss_oversampling_factor,
                 )
             except Exception as e:
                 logger.error(

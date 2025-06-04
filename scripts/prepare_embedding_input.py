@@ -18,7 +18,7 @@ import json
 import logging
 import os
 import pathlib
-import re # Added for spacify_text
+import re
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -43,7 +43,7 @@ project_root = os.path.dirname(benchmarking_dir)
 
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-    
+
 try:
     from dev_tools.config import APP_CONFIG
     from lean_explore.shared.models.db import StatementGroup
@@ -92,27 +92,28 @@ def spacify_text(text: str) -> str:
     Returns:
         The transformed string with spaces inserted for improved readability.
     """
-    text_str = str(text) # Ensure input is treated as a string
+    text_str = str(text)  # Ensure input is treated as a string
 
-    first_slash_index = text_str.find('/')
+    first_slash_index = text_str.find("/")
     if first_slash_index != -1:
-        text_str = text_str[first_slash_index + 1:]
+        text_str = text_str[first_slash_index + 1 :]
 
     # Replace hyphens and underscores with spaces
-    text_str = text_str.replace('-', ' ').replace('_', ' ').replace(".lean", "")
-    
+    text_str = text_str.replace("-", " ").replace("_", " ").replace(".lean", "")
+
     # Insert spaces for camelCase
     # Handles: lowercase/digit followed by uppercase (e.g., "oneTwo" -> "one Two")
-    text_str = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', text_str)
-    # Handles: uppercase followed by another uppercase then lowercase (e.g., "HTMLFile" -> "HTML File")
-    text_str = re.sub(r'([A-Z])([A-Z][a-z])', r'\1 \2', text_str)
-    
+    text_str = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text_str)
+    # Handles: uppercase followed by another uppercase then lowercase
+    # (e.g., "HTMLFile" -> "HTML File")
+    text_str = re.sub(r"([A-Z])([A-Z][a-z])", r"\1 \2", text_str)
+
     # Add spaces around specified path delimiters
-    text_str = text_str.replace('/', ' ')
-    text_str = text_str.replace('.', ' ')
-    
+    text_str = text_str.replace("/", " ")
+    text_str = text_str.replace(".", " ")
+
     # Normalize multiple spaces to a single space and strip leading/trailing whitespace
-    text_str = re.sub(r'\s+', ' ', text_str).strip()
+    text_str = re.sub(r"\s+", " ", text_str).strip()
     text_str = text_str.lower()
     return text_str
 
@@ -245,14 +246,13 @@ def prepare_data(
                     final_informal_text = ""
                     if sg_obj.informal_description:
                         original_description = sg_obj.informal_description.strip()
-                        if original_description: # Only if actual description exists
+                        if original_description:  # Only if actual description exists
                             # sg_obj.source_file is non-nullable
                             transformed_path = spacify_text(sg_obj.source_file)
                             final_informal_text = (
-                                f"{original_description}\n"
-                                f"{transformed_path}"
+                                f"{original_description}\n{transformed_path}"
                             )
-                    
+
                     if final_informal_text:
                         output_records.append(
                             {
@@ -280,14 +280,14 @@ def prepare_data(
                     final_docstring_text = ""
                     if sg_obj.docstring:
                         original_docstring = sg_obj.docstring.strip()
-                        if original_docstring: # Only if actual docstring exists
+                        if original_docstring:  # Only if actual docstring exists
                             # sg_obj.source_file is non-nullable
                             transformed_path = spacify_text(sg_obj.source_file)
                             final_docstring_text = (
                                 f"{original_docstring}"
                                 # f"{transformed_path}"
                             )
-                    
+
                     if final_docstring_text:
                         output_records.append(
                             {

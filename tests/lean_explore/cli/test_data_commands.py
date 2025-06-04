@@ -20,7 +20,7 @@ import requests  # For requests.exceptions
 
 # For spec in mock, requests.Response.raw is often a
 # urllib3.response.HTTPResponse
-import urllib3
+import urllib3  # type: ignore[import-untyped]
 from typer.testing import CliRunner
 
 from lean_explore import defaults
@@ -372,7 +372,7 @@ class TestDataCommandHelpers:
 
 # --- Tests for CLI Command 'fetch' ---
 class TestDataFetchCommand:
-    """Tests for the `Workspace` CLI command in data_commands.py."""
+    """Tests for the `fetch` CLI command in data_commands.py."""
 
     runner = CliRunner()
 
@@ -399,7 +399,12 @@ class TestDataFetchCommand:
                             "size_bytes_compressed": 2000,
                         },
                     ],
-                }
+                },
+                "0.2.0": {  # Added for testing non-default stable
+                    "description": "Version 0.2.0",
+                    "assets_base_path_r2": "assets/v0.2.0/",
+                    "files": [],
+                },
             },
         }
 
@@ -445,20 +450,13 @@ class TestDataFetchCommand:
         mock_get.side_effect = get_side_effect
         return mock_get
 
-    def test_fetch_successful_stable_version(
+    def test_fetch_successful_default_version(
         self,
         isolated_data_paths: pathlib.Path,
         mock_assets: MagicMock,
         mock_manifest_content: Dict[str, Any],
     ) -> None:
-        """Tests successful fetching of the 'stable' toolchain version.
-
-        The 'catch_exceptions=False' argument to invoke is crucial for debugging;
-        it ensures that if Typer/Click encounters an issue parsing arguments
-        or dispatching the command (leading to exit code 2), the underlying
-        Python exception (if any, beyond SystemExit) will propagate and be fully
-        displayed by pytest, aiding in diagnosing issues like the
-        "Got unexpected extra argument" error.
+        """Tests successful fetching of the default ('stable') toolchain version.
 
         Args:
             isolated_data_paths: Fixture redirecting default data paths.
@@ -466,16 +464,14 @@ class TestDataFetchCommand:
             mock_manifest_content: Sample manifest data.
         """
         result = self.runner.invoke(
-            data_commands_module.app, ["fetch", "stable"], catch_exceptions=False
+            data_commands_module.app, ["fetch"], catch_exceptions=False
         )
 
         if result.exit_code != 0:  # pragma: no cover
-            print("\nDebug Output for test_fetch_successful_stable_version:")
+            print("\nDebug Output for test_fetch_successful_default_version:")
             print(f"Exit Code: {result.exit_code}")
             print(f"Output:\n{result.output}")
-            if (
-                result.exception
-            ):  # If catch_exceptions=False, this might be None if SystemExit was raised
+            if result.exception:
                 print(f"Exception Type: {type(result.exception)}")
                 print(f"Exception Value: {result.exception}")
 
@@ -483,13 +479,18 @@ class TestDataFetchCommand:
             f"Command failed unexpectedly. Typer error indicated: {result.output}"
         )
 
-        num_files = len(mock_manifest_content["toolchains"]["0.1.0"]["files"])
+        default_version_key = mock_manifest_content["default_toolchain"]
+        num_files = len(
+            mock_manifest_content["toolchains"][default_version_key]["files"]
+        )
         assert data_commands_module._download_file_with_progress.call_count == num_files
         assert data_commands_module._verify_sha256_checksum.call_count == num_files
         assert data_commands_module._decompress_gzipped_file.call_count == num_files
 
-        version_dir = isolated_data_paths / "toolchains" / "0.1.0"
-        for file_entry in mock_manifest_content["toolchains"]["0.1.0"]["files"]:
+        version_dir = isolated_data_paths / "toolchains" / default_version_key
+        for file_entry in mock_manifest_content["toolchains"][default_version_key][
+            "files"
+        ]:
             expected_output_path = version_dir / file_entry["local_name"]
             expected_temp_download_path = version_dir / file_entry["remote_name"]
 
@@ -529,7 +530,7 @@ class TestDataFetchCommand:
         mock_console_print = mocker.patch.object(data_commands_module.console, "print")
 
         result = self.runner.invoke(
-            data_commands_module.app, ["fetch", "stable"], catch_exceptions=False
+            data_commands_module.app, ["fetch"], catch_exceptions=False
         )
         if result.exit_code != 1:  # pragma: no cover
             print(
@@ -537,9 +538,7 @@ class TestDataFetchCommand:
                 f"Exit Code: {result.exit_code}\nOutput:\n{result.output}"
             )
             if result.exception:
-                print(
-                    f"Exception:\n{result.exception}"
-                )  # Should be SystemExit(1) if handled correctly
+                print(f"Exception:\n{result.exception}")
         assert result.exit_code == 1, (
             "Command did not exit with 1 as expected. "
             f"Typer error indicated: {result.output}"
@@ -552,31 +551,41 @@ class TestDataFetchCommand:
             if isinstance(arg, str)
         )
 
-    def test_fetch_version_not_in_manifest(
+    def test_fetch_stable_version_not_in_manifest_toolchains(
         self,
         isolated_data_paths: pathlib.Path,
         mock_assets: MagicMock,
         mock_manifest_content: Dict[str, Any],
-        mocker: "MockerFixture",  # pylint: disable=unused-argument
     ) -> None:
-        """Tests fetch command failure when requested version is not in manifest.
+        """Tests 'stable' version not in 'toolchains'.
+
+        Tests fetch failure when 'stable' (default_toolchain) version is not
+        detailed in 'toolchains'.
 
         Args:
             isolated_data_paths: Fixture redirecting default data paths.
-            mock_assets: Fixture that mocks HTTP calls.
-            mock_manifest_content: Sample manifest data.
-            mocker: Pytest-mock's mocker fixture.
+            mock_assets: Fixture that mocks HTTP calls; provides modified manifest.
+            mock_manifest_content: Sample manifest data, will be modified.
         """
+        # Modify the manifest content for this test case
+        mock_manifest_content["default_toolchain"] = "non_existent_key"
+        # Ensure "non_existent_key" is NOT in mock_manifest_content["toolchains"]
+        if "non_existent_key" in mock_manifest_content["toolchains"]:
+            del mock_manifest_content["toolchains"]["non_existent_key"]
+            # pragma: no cover
+
+        # mock_assets uses the (now modified) mock_manifest_content in its side_effect
         mock_console_print_instance = data_commands_module.console.print
 
         result = self.runner.invoke(
             data_commands_module.app,
-            ["fetch", "0.non.existent"],
+            ["fetch"],  # No version argument
             catch_exceptions=False,
         )
         if result.exit_code != 1:  # pragma: no cover
             print(
-                f"\nDebug Output for test_fetch_version_not_in_manifest:\n"
+                f"\nDebug Output for "
+                "test_fetch_stable_version_not_in_manifest_toolchains:\n"
                 f"Exit Code: {result.exit_code}\nOutput:\n{result.output}"
             )
             if result.exception:
@@ -586,7 +595,7 @@ class TestDataFetchCommand:
             f"Typer error indicated: {result.output}"
         )
         assert any(
-            "Error: Version '0.non.existent' (resolved from '0.non.existent') not found"
+            "Error: Version 'non_existent_key' (resolved from 'stable') not found"
             in str(arg)
             for call_args_tuple in mock_console_print_instance.call_args_list
             for arg_list in call_args_tuple
@@ -598,7 +607,7 @@ class TestDataFetchCommand:
         self,
         isolated_data_paths: pathlib.Path,
         mock_assets: MagicMock,
-        mocker: "MockerFixture",  # pylint: disable=unused-argument
+        mocker: "MockerFixture",
     ) -> None:
         """Tests fetch command failure when an asset download fails.
 
@@ -613,7 +622,7 @@ class TestDataFetchCommand:
         mock_console_print_instance = data_commands_module.console.print
 
         result = self.runner.invoke(
-            data_commands_module.app, ["fetch", "stable"], catch_exceptions=False
+            data_commands_module.app, ["fetch"], catch_exceptions=False
         )
         if result.exit_code != 1:  # pragma: no cover
             print(
@@ -645,7 +654,7 @@ class TestDataFetchCommand:
         self,
         isolated_data_paths: pathlib.Path,
         mock_assets: MagicMock,
-        mocker: "MockerFixture",  # pylint: disable=unused-argument
+        mocker: "MockerFixture",
     ) -> None:
         """Tests fetch command failure due to checksum mismatch.
 
@@ -660,7 +669,7 @@ class TestDataFetchCommand:
         mock_console_print_instance = data_commands_module.console.print
 
         result = self.runner.invoke(
-            data_commands_module.app, ["fetch", "stable"], catch_exceptions=False
+            data_commands_module.app, ["fetch"], catch_exceptions=False
         )
         if result.exit_code != 1:  # pragma: no cover
             print(
@@ -692,7 +701,7 @@ class TestDataFetchCommand:
         self,
         isolated_data_paths: pathlib.Path,
         mock_assets: MagicMock,
-        mocker: "MockerFixture",  # pylint: disable=unused-argument
+        mocker: "MockerFixture",
     ) -> None:
         """Tests fetch command failure due to decompression error.
 
@@ -707,7 +716,7 @@ class TestDataFetchCommand:
         mock_console_print_instance = data_commands_module.console.print
 
         result = self.runner.invoke(
-            data_commands_module.app, ["fetch", "stable"], catch_exceptions=False
+            data_commands_module.app, ["fetch"], catch_exceptions=False
         )
         if result.exit_code != 1:  # pragma: no cover
             print(

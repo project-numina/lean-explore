@@ -36,9 +36,7 @@ if not logging.getLogger().hasHandlers():
 
 # Default filenames
 DEFAULT_CONFIG_FILENAME = "config.yml"
-DEFAULT_COSTS_FILENAME = (
-    "model_costs.json"
-)
+DEFAULT_COSTS_FILENAME = "model_costs.json"
 
 # Environment variables for specifying config file paths explicitly
 ENV_CONFIG_PATH = "LEAN_RANK_CONFIG_FILE"
