@@ -29,7 +29,6 @@ Justin Asher. (2025). *LeanExplore: A search engine for Lean 4 declarations*. Le
   author = {Asher, Justin},
   title = {{LeanExplore: A search engine for Lean 4 declarations}},
   year = {2025},
-  publisher = {LeanExplore.com},
   url = {http://www.leanexplore.com},
   note = {GitHub repository: https://github.com/justincasher/lean-explore}
 }
