@@ -29,6 +29,7 @@ The current indexed projects include:
 
 * Batteries
 * Lean
+* Init
 * Mathlib
 * PhysLean
 * Std
