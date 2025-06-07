@@ -501,7 +501,8 @@ class TestApiKeyManagement:
         with caplog.at_level(logging.WARNING):
             assert load_func() is None
         assert (
-            f"{key_type_name} API key found in {config_file} but is not a valid string."
+            f"{key_type_name} API key found in {config_file} but is not a valid "
+            "non-empty string."
             in caplog.text
         )
 
