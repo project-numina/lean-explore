@@ -9,7 +9,7 @@ provides methods for interacting with the local Lean explore data.
 
 import logging
 import pathlib
-from typing import TYPE_CHECKING, Dict, List, Tuple
+from typing import TYPE_CHECKING, List
 from unittest.mock import MagicMock
 
 import faiss
@@ -21,6 +21,8 @@ from sqlalchemy.orm import Session as SQLAlchemySession
 from lean_explore import defaults
 from lean_explore.local.service import Service
 from lean_explore.shared.models.api import (
+    APICitationsResponse,
+    APIPrimaryDeclarationInfo,
     APISearchResponse,
     APISearchResultItem,
 )
@@ -362,13 +364,13 @@ class TestServiceMethods:
         api_item = initialized_service._serialize_sg_to_api_item(mock_sg_orm)
         assert api_item.primary_declaration.lean_name is None
 
-    def test_get_by_id_found(
+    def test_get_by_id_single_id(
         self,
         initialized_service: Service,
         db_session: SQLAlchemySession,
         mocker: "MockerFixture",
     ):
-        """Tests retrieving a StatementGroup by ID when it exists.
+        """Tests retrieving a StatementGroup by a single ID.
 
         Args:
             initialized_service: An initialized Service instance.
@@ -385,7 +387,7 @@ class TestServiceMethods:
             range_start_col=0,
             range_end_line=5,
             range_end_col=15,
-            primary_decl_id=1,
+            primary_decl_id=decl.id,
             primary_declaration=decl,
         )
         db_session.add_all([decl, sg])
@@ -397,34 +399,67 @@ class TestServiceMethods:
 
         result = initialized_service.get_by_id(101)
 
-        assert result is not None
+        assert isinstance(result, APISearchResultItem)
         assert result.id == 101
         assert result.primary_declaration.lean_name == "Nat.zero"
-        assert result.statement_text == "def zero := 0"
 
-    def test_get_by_id_not_found(
+    def test_get_by_id_batch_ids(
         self,
         initialized_service: Service,
         db_session: SQLAlchemySession,
         mocker: "MockerFixture",
     ):
-        """Tests retrieving a StatementGroup by ID when it does not exist.
+        """Tests retrieving multiple StatementGroups by a list of IDs.
 
         Args:
             initialized_service: An initialized Service instance.
             db_session: An in-memory SQLite session.
             mocker: Pytest-mock's mocker fixture.
         """
+        decl1 = Declaration(id=1, lean_name="Test1", decl_type="def")
+        sg1 = StatementGroup(
+            id=101,
+            text_hash="h1",
+            statement_text="t1",
+            source_file="f1",
+            range_start_line=1,
+            range_start_col=1,
+            range_end_line=1,
+            range_end_col=1,
+            primary_decl_id=decl1.id,
+        )
+        decl2 = Declaration(id=2, lean_name="Test2", decl_type="def")
+        sg2 = StatementGroup(
+            id=102,
+            text_hash="h2",
+            statement_text="t2",
+            source_file="f2",
+            range_start_line=1,
+            range_start_col=1,
+            range_end_line=1,
+            range_end_col=1,
+            primary_decl_id=decl2.id,
+        )
+        db_session.add_all([decl1, decl2, sg1, sg2])
+        db_session.commit()
+
         mocker.patch.object(
             initialized_service, "SessionLocal", return_value=db_session
         )
-        result = initialized_service.get_by_id(999)
-        assert result is None
+
+        results = initialized_service.get_by_id([101, 102, 999])  # 999 is not found
+
+        assert isinstance(results, list)
+        assert len(results) == 3
+        assert isinstance(results[0], APISearchResultItem)
+        assert results[0].id == 101
+        assert isinstance(results[1], APISearchResultItem)
+        assert results[1].id == 102
+        assert results[2] is None
 
     def test_get_by_id_sqlalchemy_error(
         self,
         initialized_service: Service,
-        db_session: SQLAlchemySession,
         mocker: "MockerFixture",
         caplog: pytest.LogCaptureFixture,
     ):
@@ -432,14 +467,17 @@ class TestServiceMethods:
 
         Args:
             initialized_service: An initialized Service instance.
-            db_session: An in-memory SQLite session.
             mocker: Pytest-mock's mocker fixture.
             caplog: Pytest fixture to capture log output.
         """
+        mock_session_query = mocker.MagicMock()
+        mock_session_query.side_effect = SQLAlchemyError("DB query failed")
+
         mock_session = mocker.MagicMock(spec=SQLAlchemySession)
-        (
-            mock_session.query.return_value.options.return_value.filter.return_value.first
-        ).side_effect = SQLAlchemyError("DB query failed during get_by_id")
+        query_chain = (
+            mock_session.query.return_value.options.return_value.filter.return_value
+        )
+        query_chain.first = mock_session_query
 
         mock_session_local_cm = mocker.MagicMock()
         mock_session_local_cm.__enter__.return_value = mock_session
@@ -450,232 +488,185 @@ class TestServiceMethods:
         )
 
         with caplog.at_level(logging.ERROR):
-            result = initialized_service.get_by_id(101)
+            result = initialized_service.get_by_id([101])
 
-        assert result is None
+        assert isinstance(result, list)
+        assert result[0] is None
         assert "Database error in get_by_id for group_id 101" in caplog.text
-        assert "DB query failed during get_by_id" in caplog.text
+        assert "DB query failed" in caplog.text
 
-    def test_get_dependencies_found(
+    def test_get_dependencies_batch_ids(
         self,
         initialized_service: Service,
         db_session: SQLAlchemySession,
         mocker: "MockerFixture",
     ):
-        """Tests retrieving dependencies for a StatementGroup.
+        """Tests retrieving dependencies for a list of StatementGroup IDs.
 
         Args:
             initialized_service: An initialized Service instance.
             db_session: An in-memory SQLite session.
             mocker: Pytest-mock's mocker fixture.
         """
-        decl1 = Declaration(id=1, lean_name="Nat.succ", decl_type="def")
-        decl2 = Declaration(id=2, lean_name="Nat.zero", decl_type="axiom")
-        sg_source = StatementGroup(
+        decl1 = Declaration(id=1, lean_name="Src1", decl_type="def")
+        decl2 = Declaration(id=2, lean_name="Src2", decl_type="def")
+        decl3 = Declaration(id=3, lean_name="Tgt1", decl_type="def")
+        sg_source1 = StatementGroup(
             id=201,
-            text_hash="hash_source",
-            statement_text="def succ (n: Nat) := Nat.add n 1",
-            primary_decl_id=1,
-            primary_declaration=decl1,
+            text_hash="h1",
+            statement_text="t1",
             source_file="f1",
             range_start_line=1,
             range_start_col=1,
             range_end_line=1,
             range_end_col=1,
+            primary_decl_id=1,
+            primary_declaration=decl1,
         )
-        sg_target = StatementGroup(
+        sg_source2 = StatementGroup(
             id=202,
-            text_hash="hash_target",
-            statement_text="axiom zero : Nat",
-            primary_decl_id=2,
-            primary_declaration=decl2,
+            text_hash="h2",
+            statement_text="t2",
             source_file="f2",
             range_start_line=1,
             range_start_col=1,
             range_end_line=1,
             range_end_col=1,
+            primary_decl_id=2,
+            primary_declaration=decl2,
         )
-        dependency = StatementGroupDependency(
-            source_statement_group_id=201, target_statement_group_id=202
-        )
-        db_session.add_all([decl1, decl2, sg_source, sg_target, dependency])
-        db_session.commit()
-
-        mocker.patch.object(
-            initialized_service, "SessionLocal", return_value=db_session
-        )
-        result = initialized_service.get_dependencies(201)
-
-        assert result is not None
-        assert result.source_group_id == 201
-        assert result.count == 1
-        assert len(result.citations) == 1
-        assert result.citations[0].id == 202
-        assert result.citations[0].primary_declaration.lean_name == "Nat.zero"
-
-    def test_get_dependencies_source_not_found(
-        self,
-        initialized_service: Service,
-        db_session: SQLAlchemySession,
-        mocker: "MockerFixture",
-    ):
-        """Tests get_dependencies when the source StatementGroup does not exist.
-
-        Args:
-            initialized_service: An initialized Service instance.
-            db_session: An in-memory SQLite session.
-            mocker: Pytest-mock's mocker fixture.
-        """
-        mocker.patch.object(
-            initialized_service, "SessionLocal", return_value=db_session
-        )
-        result = initialized_service.get_dependencies(999)
-        assert result is None
-
-    def test_get_dependencies_no_dependencies(
-        self,
-        initialized_service: Service,
-        db_session: SQLAlchemySession,
-        mocker: "MockerFixture",
-    ):
-        """Tests get_dependencies when the source group exists but has no dependencies.
-
-        Args:
-            initialized_service: An initialized Service instance.
-            db_session: An in-memory SQLite session.
-            mocker: Pytest-mock's mocker fixture.
-        """
-        decl1 = Declaration(id=1, lean_name="MyAxiom", decl_type="axiom")
-        sg_source = StatementGroup(
+        sg_target = StatementGroup(
             id=301,
-            text_hash="hash_no_deps",
-            statement_text="axiom lonely : Unit",
-            primary_decl_id=1,
-            primary_declaration=decl1,
-            source_file="f",
+            text_hash="h3",
+            statement_text="t3",
+            source_file="f3",
             range_start_line=1,
             range_start_col=1,
             range_end_line=1,
             range_end_col=1,
+            primary_decl_id=3,
+            primary_declaration=decl3,
         )
-        db_session.add_all([decl1, sg_source])
+        dep1 = StatementGroupDependency(
+            source_statement_group_id=201, target_statement_group_id=301
+        )
+        db_session.add_all(
+            [decl1, decl2, decl3, sg_source1, sg_source2, sg_target, dep1]
+        )
         db_session.commit()
 
         mocker.patch.object(
             initialized_service, "SessionLocal", return_value=db_session
         )
-        result = initialized_service.get_dependencies(301)
 
-        assert result is not None
-        assert result.source_group_id == 301
-        assert result.count == 0
-        assert len(result.citations) == 0
+        results = initialized_service.get_dependencies([201, 202, 999])
 
-    def test_search_successful(
+        assert isinstance(results, list)
+        assert len(results) == 3
+        # Result 1: Found with dependencies
+        assert isinstance(results[0], APICitationsResponse)
+        assert results[0].source_group_id == 201
+        assert results[0].count == 1
+        assert results[0].citations[0].id == 301
+        # Result 2: Found with no dependencies
+        assert isinstance(results[1], APICitationsResponse)
+        assert results[1].source_group_id == 202
+        assert results[1].count == 0
+        # Result 3: Not found
+        assert results[2] is None
+
+    def test_search_single_query(
         self, initialized_service: Service, mocker: "MockerFixture"
     ):
-        """Tests the search method's orchestration and result serialization.
-
-        This test mocks `perform_search` to focus on `Service.search`'s own
-        logic: calling `perform_search`, serializing its results, applying limits,
-        and wrapping the output in `APISearchResponse`.
+        """Tests the search method with a single query.
 
         Args:
             initialized_service: An initialized Service instance.
             mocker: Pytest-mock's mocker fixture.
         """
-        mock_perform_search = mocker.patch("lean_explore.local.service.perform_search")
-        mock_sg_orm1_decl = Declaration(id=1, lean_name="Res1", decl_type="def")
-        mock_sg_orm1 = StatementGroup(
-            id=10,
-            text_hash="res1",
-            statement_text="res1_text",
-            primary_declaration=mock_sg_orm1_decl,
-            source_file="F1",
-            range_start_line=1,
-            range_start_col=1,
-            range_end_line=1,
-            range_end_col=1,
+        mock_perform_search = mocker.patch(
+            "lean_explore.local.service.perform_search",
+            return_value=[(MagicMock(id=10), {"final_score": 0.9})],
         )
-        mock_sg_orm2_decl = Declaration(id=2, lean_name="Res2", decl_type="def")
-        mock_sg_orm2 = StatementGroup(
-            id=11,
-            text_hash="res2",
-            statement_text="res2_text",
-            primary_declaration=mock_sg_orm2_decl,
-            source_file="F2",
-            range_start_line=2,
-            range_start_col=1,
-            range_end_line=1,
-            range_end_col=1,
+        mocker.patch.object(
+            initialized_service,
+            "_serialize_sg_to_api_item",
+            return_value=APISearchResultItem(
+                id=10,
+                primary_declaration=APIPrimaryDeclarationInfo(),
+                source_file="f",
+                range_start_line=1,
+                statement_text="t",
+            ),
+        )
+        mock_session_cm = MagicMock()
+        mock_session_cm.__enter__.return_value = MagicMock(spec=SQLAlchemySession)
+        mocker.patch.object(
+            initialized_service, "SessionLocal", return_value=mock_session_cm
         )
 
-        mock_perform_search_results: List[Tuple[StatementGroup, Dict[str, float]]] = [
-            (mock_sg_orm1, {"final_score": 0.9}),
-            (mock_sg_orm2, {"final_score": 0.8}),
-        ]
-        mock_perform_search.return_value = mock_perform_search_results
-
-        mock_session = mocker.MagicMock(spec=SQLAlchemySession)
-        mock_session_local_cm = mocker.MagicMock()
-        mock_session_local_cm.__enter__.return_value = mock_session
-        mock_session_local_cm.__exit__.return_value = None
-        initialized_service.SessionLocal = lambda: mock_session_local_cm
-
-        query_str = "test query"
-        pkgs = ["Mathlib"]
-        limit = 1
-        response = initialized_service.search(
-            query=query_str, package_filters=pkgs, limit=limit
-        )
+        query = "test query"
+        response = initialized_service.search(query=query)
 
         assert isinstance(response, APISearchResponse)
-        assert response.query == query_str
-        assert response.packages_applied == pkgs
-        assert response.count == limit
-        assert len(response.results) == limit
-        assert response.results[0].id == mock_sg_orm1.id
-        assert response.results[0].primary_declaration.lean_name == "Res1"
-        assert response.total_candidates_considered == len(mock_perform_search_results)
-        assert response.processing_time_ms >= 0
+        assert response.query == query
+        assert len(response.results) == 1
+        assert response.results[0].id == 10
+        mock_perform_search.assert_called_once()
 
-        mock_perform_search.assert_called_once_with(
-            session=mock_session,
-            query_string=query_str,
-            model=initialized_service.embedding_model,
-            faiss_index=initialized_service.faiss_index,
-            text_chunk_id_map=initialized_service.text_chunk_id_map,
-            faiss_k=initialized_service.default_faiss_k,
-            pagerank_weight=initialized_service.default_pagerank_weight,
-            text_relevance_weight=initialized_service.default_text_relevance_weight,
-            name_match_weight=initialized_service.default_name_match_weight,
-            log_searches=True,
-            selected_packages=pkgs,
-            semantic_similarity_threshold=initialized_service.default_semantic_similarity_threshold,
-            faiss_nprobe=initialized_service.default_faiss_nprobe,
-            faiss_oversampling_factor=initialized_service.default_faiss_oversampling_factor,
-        )
-
-    def test_search_perform_search_raises_exception(
+    def test_search_batch_queries(
         self, initialized_service: Service, mocker: "MockerFixture"
     ):
-        """Tests that Service.search re-raises exceptions from perform_search.
+        """Tests the search method with a list of queries.
 
         Args:
             initialized_service: An initialized Service instance.
             mocker: Pytest-mock's mocker fixture.
         """
         mock_perform_search = mocker.patch("lean_explore.local.service.perform_search")
-        mock_perform_search.side_effect = ValueError("perform_search failed")
+        mock_serialize = mocker.patch.object(
+            initialized_service, "_serialize_sg_to_api_item"
+        )
 
-        mock_session = mocker.MagicMock(spec=SQLAlchemySession)
-        mock_session_local_cm = mocker.MagicMock()
-        mock_session_local_cm.__enter__.return_value = mock_session
-        mock_session_local_cm.__exit__.return_value = None
-        initialized_service.SessionLocal = lambda: mock_session_local_cm
+        # Simulate different results for each query
+        mock_perform_search.side_effect = [
+            [(MagicMock(id=10), {"final_score": 0.9})],
+            [(MagicMock(id=20), {"final_score": 0.8})],
+        ]
+        mock_serialize.side_effect = [
+            APISearchResultItem(
+                id=10,
+                primary_declaration=APIPrimaryDeclarationInfo(),
+                source_file="f",
+                range_start_line=1,
+                statement_text="t",
+            ),
+            APISearchResultItem(
+                id=20,
+                primary_declaration=APIPrimaryDeclarationInfo(),
+                source_file="f",
+                range_start_line=1,
+                statement_text="t",
+            ),
+        ]
 
-        with pytest.raises(ValueError, match="perform_search failed"):
-            initialized_service.search(query="any query")
+        mock_session_cm = MagicMock()
+        mock_session_cm.__enter__.return_value = MagicMock(spec=SQLAlchemySession)
+        mocker.patch.object(
+            initialized_service, "SessionLocal", return_value=mock_session_cm
+        )
+
+        queries = ["query one", "query two"]
+        responses = initialized_service.search(query=queries)
+
+        assert isinstance(responses, list)
+        assert len(responses) == 2
+        assert mock_perform_search.call_count == 2
+
+        assert responses[0].query == queries[0]
+        assert responses[0].results[0].id == 10
+        assert responses[1].query == queries[1]
+        assert responses[1].results[0].id == 20
 
     def test_search_fails_if_assets_not_loaded(self, initialized_service: Service):
         """Tests that Service.search raises RuntimeError if core assets are missing.

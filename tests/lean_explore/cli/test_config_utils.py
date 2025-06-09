@@ -502,8 +502,7 @@ class TestApiKeyManagement:
             assert load_func() is None
         assert (
             f"{key_type_name} API key found in {config_file} but is not a valid "
-            "non-empty string."
-            in caplog.text
+            "non-empty string." in caplog.text
         )
 
     def test_delete_existing_key_and_empty_section(
