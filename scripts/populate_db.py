@@ -1,3 +1,5 @@
+# scripts/populate_db.py
+
 """Populates a relational database from Lean declaration and dependency files.
 
 This script orchestrates a multi-phase database population process:
@@ -457,7 +459,6 @@ def main():
                     "Population failed during Phase 4: Dependency Population. Review"
                     " logs."
                 )
-                # Decide if this should be a sys.exit(1) based on criticality
             else:
                 script_logger.info(
                     "Phase 4: Dependency Population processing completed."
@@ -486,7 +487,6 @@ def main():
                     "Population failed during Phase 5: StatementGroup Dependency"
                     " Population. Review logs."
                 )
-                # Decide if this should be a sys.exit(1)
             else:
                 script_logger.info(
                     "Phase 5: StatementGroup Dependency Population processing"

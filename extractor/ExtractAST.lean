@@ -309,6 +309,7 @@ Throws an `IO.userError` if the source path cannot be determined.
 -/
 def toSrcDir! (oleanPath : FilePath) (ext : String) : IO FilePath := do
   let normalizedOleanPath := oleanPath.normalize -- Use normalized paths for consistent comparisons.
+  let packagesDir ← toAbsolute packagesDir
 
   -- 1. Handle files belonging to the Lean toolchain.
   let sysroot ← Lean.findSysroot
@@ -553,7 +554,7 @@ Extracts and formats import statements from the given module header `Syntax`.
 It resolves module names to their source file paths using `findOLean` and `Path.toSrcDir!`.
 The paths are returned as a newline-separated string.
 -/
-def getImports (header: Syntax) : IO String := do
+def getImports (header: TSyntax ``Lean.Parser.Module.header) : IO String := do
   let mut s := ""
   for dep in headerToImports header do
     let oleanPath ← Lean.findOLean dep.module
@@ -579,8 +580,9 @@ unsafe def extractDataForFile (inputPath : FilePath) (jsonOutputPath : FilePath)
   let input ← IO.FS.readFile inputPath
   enableInitializersExecution
   let inputCtx := Parser.mkInputContext input inputPath.toString
-  let (headerSyntax, parserState, messages) ← Parser.parseHeader inputCtx -- Renamed `header` to `headerSyntax` for clarity
-  let (env, messages) ← processHeader headerSyntax {} messages inputCtx
+  let result ← Parser.parseHeader inputCtx
+  let (headerSyntax, parserState, messages) := result
+  let (env, messages) ← processHeader headerSyntax {} messages inputCtx (mainModule := mainModuleName)
 
   if messages.hasErrors then
     for msg in messages.toList do
@@ -599,11 +601,11 @@ unsafe def extractDataForFile (inputPath : FilePath) (jsonOutputPath : FilePath)
   let mut commandASTsWithSpan : Array CommandSyntaxWithSpan := #[]
 
   -- Process header syntax
-  let headerSpanOpt := match headerSyntax.getPos?, headerSyntax.getTailPos? with
+  let headerSpanOpt := match headerSyntax.raw.getPos?, headerSyntax.raw.getTailPos? with
     | some start, some tail => some (start, tail)
     | _, _ => none
   if headerSpanOpt.isNone then
-    IO.eprintln s!"Warning: Could not retrieve full span for header syntax in module {mainModuleName} (file: {inputPath}). Header: {headerSyntax.reprint.getD "<no reprint available>"}"
+    IO.eprintln s!"Warning: Could not retrieve full span for header syntax in module {mainModuleName} (file: {inputPath}). Header: {(headerSyntax.raw.formatStx (showInfo := false)).pretty}"
   commandASTsWithSpan := commandASTsWithSpan.push {
     commandSyntax := headerSyntax,
     byteStart := headerSpanOpt.map Prod.fst,
@@ -616,7 +618,7 @@ unsafe def extractDataForFile (inputPath : FilePath) (jsonOutputPath : FilePath)
       | some start, some tail => some (start, tail)
       | _, _ => none
     if cmdSpanOpt.isNone then
-      IO.eprintln s!"Warning: Could not retrieve full span for a command's syntax in module {mainModuleName} (file: {inputPath}). Command Syntax: {cmdStx.reprint.getD "<no reprint available>"}"
+      IO.eprintln s!"Warning: Could not retrieve full span for a command's syntax in module {mainModuleName} (file: {inputPath}). Command Syntax: {(cmdStx.formatStx (showInfo := false)).pretty}"
     commandASTsWithSpan := commandASTsWithSpan.push {
       commandSyntax := cmdStx,
       byteStart := cmdSpanOpt.map Prod.fst,

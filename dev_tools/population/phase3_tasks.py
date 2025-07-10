@@ -268,12 +268,11 @@ def _choose_primary_declaration(
     if not declarations_in_block:
         return None
 
-    # Phase 1: Heuristic Choice (based on existing sorting logic)
     candidate_pool = [decl for decl in declarations_in_block if not decl.is_internal]
     if not candidate_pool:
-        candidate_pool = list(declarations_in_block)  # Use a copy
+        candidate_pool = list(declarations_in_block)
 
-    if not candidate_pool:  # Should not happen if declarations_in_block is not empty
+    if not candidate_pool:
         logger.warning("  No candidates for primary declaration in block.")
         return None
 
@@ -302,16 +301,11 @@ def _choose_primary_declaration(
             len(d.lean_name) if d.lean_name else float("inf"),
             type_priority_map.get(d.decl_type, len(preferred_types_order) + 1),
             d.lean_name if d.lean_name else "",
-            d.id
-            if d.id is not None
-            else float("inf"),  # Added ID for ultimate stability
+            d.id if d.id is not None else float("inf"),
         )
     )
-    heuristic_choice_decl = candidate_pool[
-        0
-    ]  # This is our best guess before code check
+    heuristic_choice_decl = candidate_pool[0]
 
-    # Phase 2: Code Presence Evaluation & Final Selection
     s_found_in_code = _get_declarations_found_in_code_hierarchically(
         candidate_pool, block_statement_text
     )
@@ -324,16 +318,13 @@ def _choose_primary_declaration(
         if len(s_found_in_code) == 1:
             final_primary_decl = s_found_in_code[0]
         else:
-            eligible_candidates = list(s_found_in_code)  # Use a copy
+            eligible_candidates = list(s_found_in_code)
 
-            # Criterion 1: Prefer by prefix relationship within S_found_in_code
             prefix_based_candidates: List[Declaration] = []
             is_any_candidate_a_prefix = False
-            for d1 in eligible_candidates:  # Iterate over original eligible_candidates
+            for d1 in eligible_candidates:
                 is_d1_prefix_of_other = False
-                for (
-                    d2
-                ) in eligible_candidates:  # Iterate over original eligible_candidates
+                for d2 in eligible_candidates:
                     if d1.id == d2.id or not d1.lean_name or not d2.lean_name:
                         continue
                     if len(d1.lean_name) < len(
@@ -345,12 +336,9 @@ def _choose_primary_declaration(
                 if is_d1_prefix_of_other:
                     prefix_based_candidates.append(d1)
 
-            if is_any_candidate_a_prefix:  # Check if any prefixes were found at all
+            if is_any_candidate_a_prefix:
                 eligible_candidates = prefix_based_candidates
-            # If no candidate is a prefix of another,
-            # eligible_candidates remains S_found_in_code
 
-            # Criterion 2: Sort by lean_name length, then by ID for stability
             eligible_candidates.sort(
                 key=lambda d: (
                     len(d.lean_name) if d.lean_name else float("inf"),
@@ -358,15 +346,11 @@ def _choose_primary_declaration(
                 )
             )
 
-            if (
-                not eligible_candidates
-            ):  # Should be extremely rare if S_found_in_code was not empty
-                final_primary_decl = heuristic_choice_decl  # Fallback
+            if not eligible_candidates:
+                final_primary_decl = heuristic_choice_decl
             else:
                 best_after_sort = eligible_candidates[0]
 
-                # Criterion 3: If tied (same shortest length),
-                # prefer heuristic_choice_decl
                 shortest_len = (
                     len(best_after_sort.lean_name)
                     if best_after_sort.lean_name
@@ -438,9 +422,24 @@ def phase3_group_statements(
     """
     logger.info("Starting Phase 3: Statement Grouping and Display Text Population...")
 
+    content_hash_to_id_map: Dict[str, int] = {}
     declarations_to_process: List[Declaration] = []
     try:
         with session_factory() as session:
+            logger.info(
+                "Phase 3: Building in-memory hash map of existing statement groups..."
+            )
+            existing_groups = session.execute(
+                select(StatementGroup.id, StatementGroup.statement_text)
+            ).fetchall()
+            content_hash_to_id_map = {
+                _calculate_text_hash(text): group_id
+                for group_id, text in existing_groups
+            }
+            logger.info(
+                "Phase 3: Mapped %d existing groups.", len(content_hash_to_id_map)
+            )
+
             logger.info("Phase 3: Fetching declarations for grouping...")
             stmt = (
                 select(Declaration)
@@ -467,12 +466,12 @@ def phase3_group_statements(
             return True
     except SQLAlchemyError as e:
         logger.error(
-            "Phase 3: DB error fetching declarations for grouping: %s", e, exc_info=True
+            "Phase 3: DB error during initial data fetch: %s", e, exc_info=True
         )
         return False
     except Exception as e:
         logger.error(
-            "Phase 3: Unexpected error fetching declarations: %s", e, exc_info=True
+            "Phase 3: Unexpected error during initial data fetch: %s", e, exc_info=True
         )
         return False
 
@@ -512,61 +511,59 @@ def phase3_group_statements(
     declaration_update_batch: List[Dict[str, Any]] = []
 
     with tqdm(total=len(blocks_map), desc="Phase 3: Grouping", unit="block") as pbar:
-        for block_key_tuple, decls_in_block in blocks_map.items():
-            pbar.update(1)
-            (
-                block_src_file,
-                blk_start_line,
-                blk_start_col,
-                blk_end_line,
-                blk_end_col,
-                blk_stmt_text,  # This is the block_statement_text
-            ) = block_key_tuple
-            block_hash = _calculate_text_hash(blk_stmt_text)
+        with session_factory() as session:
+            for block_key_tuple, decls_in_block in blocks_map.items():
+                pbar.update(1)
+                (
+                    block_src_file,
+                    blk_start_line,
+                    blk_start_col,
+                    blk_end_line,
+                    blk_end_col,
+                    blk_stmt_text,
+                ) = block_key_tuple
+                block_hash = _calculate_text_hash(blk_stmt_text)
 
-            try:
-                # Pass blk_stmt_text to _choose_primary_declaration
-                primary_decl = _choose_primary_declaration(
-                    decls_in_block, blk_stmt_text
-                )
-                if (
-                    not primary_decl or primary_decl.id is None
-                ):  # Ensure primary_decl.id is not None
-                    logger.warning(
-                        "  Could not determine valid primary declaration for block hash"
-                        " %s (text: '%s...'). Skipping.",
-                        block_hash[:8],
-                        blk_stmt_text[:50].replace("\n", "\\n"),
+                try:
+                    primary_decl = _choose_primary_declaration(
+                        decls_in_block, blk_stmt_text
                     )
-                    continue
+                    if not primary_decl or primary_decl.id is None:
+                        logger.warning(
+                            "  Could not determine valid primary declaration for block"
+                            " hash %s (text: '%s...'). Skipping.",
+                            block_hash[:8],
+                            blk_stmt_text[:50].replace("\n", "\\n"),
+                        )
+                        continue
 
-                base_display_text = (
-                    primary_decl.declaration_signature
-                    if primary_decl.declaration_signature
-                    and primary_decl.declaration_signature.strip()
-                    else blk_stmt_text
-                )
-                cleaned_display_text = _remove_attributes_from_text(base_display_text)
-                cleaned_display_text = _remove_all_comments_from_text(
-                    cleaned_display_text
-                )
+                    base_display_text = (
+                        primary_decl.declaration_signature
+                        if primary_decl.declaration_signature
+                        and primary_decl.declaration_signature.strip()
+                        else blk_stmt_text
+                    )
+                    cleaned_display_text = _remove_attributes_from_text(
+                        base_display_text
+                    )
+                    cleaned_display_text = _remove_all_comments_from_text(
+                        cleaned_display_text
+                    )
 
-                with session_factory() as session:
-                    sg_entry = session.execute(
-                        select(StatementGroup).filter_by(text_hash=block_hash)
-                    ).scalar_one_or_none()
-
+                    existing_group_id = content_hash_to_id_map.get(block_hash)
                     sg_id_for_linking: Optional[int] = None
-                    if sg_entry:
-                        sg_id_for_linking = sg_entry.id
-                        needs_update = False
-                        if sg_entry.primary_decl_id != primary_decl.id:
+
+                    if existing_group_id:
+                        sg_entry = session.get(StatementGroup, existing_group_id)
+                        if sg_entry:
+                            sg_id_for_linking = sg_entry.id
+                            sg_entry.source_file = block_src_file
+                            sg_entry.range_start_line = blk_start_line
+                            sg_entry.range_start_col = blk_start_col
+                            sg_entry.range_end_line = blk_end_line
+                            sg_entry.range_end_col = blk_end_col
                             sg_entry.primary_decl_id = primary_decl.id
-                            needs_update = True
-                        if sg_entry.docstring != primary_decl.docstring:
                             sg_entry.docstring = primary_decl.docstring
-                            needs_update = True
-                        if sg_entry.display_statement_text != cleaned_display_text:
                             sg_entry.display_statement_text = cleaned_display_text
                             needs_update = True
                         if (
@@ -585,8 +582,15 @@ def phase3_group_statements(
                         if needs_update:
                             session.commit()
                             updated_group_count += 1
-                            logger.debug("  Updated StatementGroup ID %d.", sg_entry.id)
-                    else:
+                        else:
+                            logger.warning(
+                                "Found hash for SG ID %d but could not fetch the "
+                                "record. A new group will be created.",
+                                existing_group_id,
+                            )
+                            existing_group_id = None
+
+                    if not existing_group_id:
                         new_sg = StatementGroup(
                             text_hash=block_hash,
                             statement_text=blk_stmt_text,
@@ -599,57 +603,46 @@ def phase3_group_statements(
                             primary_decl_id=primary_decl.id,
                             docstring=primary_decl.docstring,
                         )
+                        new_sg.declarations = decls_in_block
                         session.add(new_sg)
-                        try:
-                            session.commit()
-                            sg_id_for_linking = new_sg.id
-                            created_group_count += 1
-                        except IntegrityError:
-                            session.rollback()
-                            logger.warning(
-                                "IntegrityError on new SG commit (hash %s). "
-                                "Refetching.",
-                                block_hash[:8],
-                            )
-                            sg_refetched = session.execute(
-                                select(StatementGroup).filter_by(text_hash=block_hash)
-                            ).scalar_one_or_none()
-                            if sg_refetched:
-                                sg_id_for_linking = sg_refetched.id
-                            else:
-                                logger.error(
-                                    "Refetch failed for hash %s. Skipping linking.",
-                                    block_hash[:8],
-                                )
+                        session.flush()
+                        sg_id_for_linking = new_sg.id
+                        content_hash_to_id_map[block_hash] = new_sg.id
+                        created_group_count += 1
 
                     if sg_id_for_linking is not None:
                         for decl_to_link in decls_in_block:
-                            if (
-                                decl_to_link.id is not None
-                                and decl_to_link.statement_group_id != sg_id_for_linking
-                            ):
+                            if decl_to_link.id is not None:
                                 declaration_update_batch.append(
                                     {
                                         "id": decl_to_link.id,
                                         "statement_group_id": sg_id_for_linking,
                                     }
                                 )
-            except SQLAlchemyError as e_block_db:
-                logger.error(
-                    "DB error processing block (hash %s): %s. Rolling back session for"
-                    " this block.",
-                    block_hash[:8] if "block_hash" in locals() else "N/A",
-                    e_block_db,
-                )
-                if "session" in locals() and session.is_active:  # type: ignore[possibly-undefined]
-                    session.rollback()  # type: ignore[possibly-undefined]
-            except Exception as e_block_unexpected:
-                logger.error(
-                    "Unexpected error processing block (hash %s): %s",
-                    block_hash[:8] if "block_hash" in locals() else "N/A",
-                    e_block_unexpected,
-                    exc_info=True,
-                )
+
+                except IntegrityError as e:
+                    logger.warning(
+                        "Integrity error for block hash %s: %s. Rolling back.",
+                        block_hash[:8],
+                        e,
+                    )
+                    session.rollback()
+                except SQLAlchemyError as e_block_db:
+                    logger.error(
+                        "DB error processing block (hash %s): %s. Rolling back.",
+                        block_hash[:8],
+                        e_block_db,
+                    )
+                    session.rollback()
+                except Exception as e_block_unexpected:
+                    logger.error(
+                        "Unexpected error processing block (hash %s): %s",
+                        block_hash[:8],
+                        e_block_unexpected,
+                        exc_info=True,
+                    )
+                    session.rollback()
+            session.commit()
 
     if declaration_update_batch:
         logger.info(

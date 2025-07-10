@@ -67,7 +67,7 @@ Accepts a `NameSet` of `targetRootNames` to filter declarations by module root.
 -/
 def extractData (hDecls hDeps : Handle) (totalToProcess : Nat) (targetRootNames : NameSet) : CoreM Unit := do
   let env ← getEnv
-  let srcSearchPath ← initSrcSearchPath -- IO action lifted to CoreM.
+  let srcSearchPath ← getSrcSearchPath -- IO action lifted to CoreM.
   let allModules := env.allImportedModuleNames
   let processedCountRef ← IO.mkRef 0
   let progressInterval : Nat := 5000 -- Report progress every n declarations.
@@ -226,7 +226,6 @@ unsafe def main : IO Unit := do
     let imports : Array Import := #[
       { module := `Mathlib },
       { module := `Batteries },
-      { module := `FLT },
       { module := `PhysLean },
       { module := `Std }
     ]
@@ -239,10 +238,10 @@ unsafe def main : IO Unit := do
     IO.println s!"Specified modules imported successfully. Environment created."
 
     let targetRootNames : NameSet := .ofList [
-      `Mathlib, `Batteries, `PhysLean, `Std, `Init, `Lean, `FLT
+      `Mathlib, `Batteries, `PhysLean, `Std, `Init, `Lean
     ]
 
-    let targetRootNamesList : List Name := [`Mathlib, `Batteries, `PhysLean, `Std, `Init, `Lean, `FLT] -- Keep an ordered list for printing
+    let targetRootNamesList : List Name := [`Mathlib, `Batteries, `PhysLean, `Std, `Init, `Lean] -- Keep an ordered list for printing
     let initialCountsByRoot : Std.HashMap Name Nat := Id.run do
       let mut map := Std.HashMap.emptyWithCapacity targetRootNamesList.length
       for rootName in targetRootNamesList do

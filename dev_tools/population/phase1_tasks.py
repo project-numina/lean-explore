@@ -16,13 +16,13 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Type
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select, Table
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql.expression import ColumnElement  # Used for type hinting columns
 from tqdm import tqdm
 
-from lean_explore.shared.models.db import Declaration, StatementGroup
+from lean_explore.shared.models.db import Declaration, Dependency, StatementGroup
 
 logger = logging.getLogger(__name__)
 
@@ -143,18 +143,6 @@ def _execute_select_in_chunks(
             "attempting to execute base statement or returning empty if IN is "
             "essential."
         )
-        # If the IN clause is essential and values are empty, it means no results.
-        # An empty IN () is often invalid SQL or means false.
-        # If select_stmt has no other where clauses, this might select all if
-        # not handled. To be safe, if values is empty, we add a 'WHERE false'
-        # effectively. However, if the original select_stmt is simple (e.g.,
-        # just selecting columns), and the IN is the only filter, returning []
-        # is correct. Let's refine to add an always-false condition if values
-        # is empty. This needs to be done carefully to not break complex
-        # existing where clauses. For simplicity here, if it's an IN filter
-        # that's empty, usually means "no match for this part".
-        # If the overall query relies on this IN to return anything, then empty
-        # list is correct.
         return []
 
     all_results = []
@@ -162,9 +150,6 @@ def _execute_select_in_chunks(
 
     for i in range(0, len(value_list), chunk_size):
         chunk = value_list[i : i + chunk_size]
-        # Apply the IN clause to a copy or by reconstructing if necessary
-        # to avoid modifying the original select_stmt's where clause repeatedly.
-        # A simple way: clone the statement or build the final where clause with and_().
         current_stmt = select_stmt.where(filter_column.in_(chunk))
         all_results.extend(session.execute(current_stmt).fetchall())
     return all_results
@@ -609,7 +594,6 @@ def phase1_populate_declarations_initial(
                 "DB state..."
             )
 
-            # Base statement for rebuilding the map, targeting only active declarations
             rebuild_stmt_base = select(Declaration.id, Declaration.lean_name)
 
             if not active_lean_names_from_input:
@@ -620,7 +604,6 @@ def phase1_populate_declarations_initial(
                         "Input was empty and stale data potentially deleted; "
                         "final map will be empty if DB is empty."
                     )
-                    # Query all remaining declarations (could be none)
                     results_rebuild = session.execute(rebuild_stmt_base).fetchall()
 
                 elif create_tables_flag:  # create_tables_flag true, input empty
@@ -629,9 +612,7 @@ def phase1_populate_declarations_initial(
                         "map is empty."
                     )
                     results_rebuild = []
-                else:  # Non-empty input file yielded no active_lean_names
-                    # Or if initial file processing failed to
-                    # populate active_lean_names_from_input
+                else:
                     logger.warning(
                         "No active lean names collected from input, or input "
                         "processing error. Rebuilding map from all current DB "
@@ -642,9 +623,9 @@ def phase1_populate_declarations_initial(
             else:  # Normal case: active_lean_names_from_input is populated
                 results_rebuild = _execute_select_in_chunks(
                     session,
-                    rebuild_stmt_base,  # The base SELECT statement
-                    Declaration.lean_name,  # The column to filter with IN
-                    list(active_lean_names_from_input),  # The values for the IN clause
+                    rebuild_stmt_base,
+                    Declaration.lean_name,
+                    list(active_lean_names_from_input),
                 )
 
             final_lean_name_to_db_id = {
@@ -672,20 +653,38 @@ def _delete_stale_declarations_and_manage_sg_integrity(
 ):
     """Manages StatementGroup integrity and deletes stale declarations.
 
+    This function orchestrates the deletion of stale data in a specific
+    order to maintain database referential integrity. It removes dependencies,
+    handles statement group primary declaration reassignments or deletions,
+    and finally removes the stale declarations themselves.
+
     Args:
         session: The active SQLAlchemy session. All operations are performed
-                 within this session. The caller is responsible for committing.
+            within this session. The caller is responsible for committing.
         active_lean_names_from_input: A set of lean_names considered active.
-        stale_declaration_ids: A set of database IDs for declarations marked as stale.
+        stale_declaration_ids: A set of database IDs for declarations marked
+            as stale.
     """
     if not stale_declaration_ids:
         logger.debug("_delete_stale: No stale declaration IDs to process.")
         return
 
     logger.info(
-        "Managing StatementGroup integrity for %d stale declarations...",
-        len(stale_declaration_ids),
+        "Managing integrity for %d stale declarations...", len(stale_declaration_ids)
     )
+
+    # 1. Delete dependencies involving stale declarations first.
+    logger.info("Pruning related entries from the 'dependencies' table.")
+    deleted_dep_count = _execute_delete_in_chunks(
+        session,
+        Dependency,
+        or_(
+            Dependency.source_decl_id.in_(stale_declaration_ids),
+            Dependency.target_decl_id.in_(stale_declaration_ids),
+        ),
+        [True],  # A dummy value to trigger execution; filter is in the column
+    )
+    logger.info("Deleted %d related dependency records.", deleted_dep_count)
 
     sg_info_list_tuples = session.execute(
         select(StatementGroup.id, StatementGroup.primary_decl_id)
@@ -783,11 +782,7 @@ def _delete_stale_declarations_and_manage_sg_integrity(
                 e_sg_update,
                 exc_info=True,
             )
-            session.rollback()  # Rollback this specific set of SG updates
-            # Decide if this is critical enough to halt all further deletions.
-            # For now, we'll log and attempt to continue with other deletions.
-            # Or re-raise to abort the entire deletion process in
-            # phase1_populate_declarations_initial
+            session.rollback()
 
     logger.info(
         "Preparing to delete %d stale declarations...", len(stale_declaration_ids)
@@ -852,5 +847,3 @@ def _delete_stale_declarations_and_manage_sg_integrity(
         logger.info(
             "Actually deleted %d stale/orphaned StatementGroups.", deleted_sg_count
         )
-    # The main caller `phase1_populate_declarations_initial` will commit the
-    # session after this function.
