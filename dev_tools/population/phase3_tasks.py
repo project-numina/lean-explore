@@ -569,6 +569,19 @@ def phase3_group_statements(
                         if sg_entry.display_statement_text != cleaned_display_text:
                             sg_entry.display_statement_text = cleaned_display_text
                             needs_update = True
+                        if (
+                            sg_entry.source_file != block_src_file
+                            or sg_entry.range_start_line != blk_start_line
+                            or sg_entry.range_start_col != blk_start_col
+                            or sg_entry.range_end_line != blk_end_line
+                            or sg_entry.range_end_col != blk_end_col
+                        ):
+                            sg_entry.source_file = block_src_file
+                            sg_entry.range_start_line = blk_start_line
+                            sg_entry.range_start_col = blk_start_col
+                            sg_entry.range_end_line = blk_end_line
+                            sg_entry.range_end_col = blk_end_col
+                            needs_update = True
                         if needs_update:
                             session.commit()
                             updated_group_count += 1
