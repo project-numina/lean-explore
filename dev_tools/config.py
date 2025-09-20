@@ -351,6 +351,20 @@ def get_gemini_api_key() -> Optional[str]:
     return os.getenv("GEMINI_API_KEY")
 
 
+def get_openai_api_key() -> Optional[str]:
+    """Retrieves the OpenAI API Key directly from environment variables.
+
+    This function bypasses the main `APP_CONFIG` for direct access to the
+    `OPENAI_API_KEY` environment variable, typically loaded via `.env` or
+    set in the execution environment.
+
+    Returns:
+        Optional[str]: The OpenAI API key string if the 'OPENAI_API_KEY'
+        environment variable is set, otherwise None.
+    """
+    return os.getenv("OPENAI_API_KEY")
+
+
 # --- Example Usage / Standalone Test ---
 if __name__ == "__main__":
     # This block executes only when the script is run directly for testing.

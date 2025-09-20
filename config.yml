@@ -3,9 +3,10 @@ database:
   url: "sqlite:///data/lean_explore_data.db"
 
 llm:
+  openai_base_url: "https://openrouter.ai/api/v1"
   # --- Model Configuration ---
-  # Google Gemini model for text generation.
-  generation_model: "gemini-2.0-flash"
+  # Model for text generation.
+  generation_model: "deepseek/deepseek-chat-v3.1"
   # Google Gemini model for API-based text embeddings.
   # Note: Search uses a local sentence-transformer model specified in 'search' section.
   embedding_model: "models/text-embedding-004"
@@ -48,7 +49,7 @@ get_summaries:
 search:
   # --- Semantic Search ---
   # Sentence-transformer model for query embeddings (must match FAISS index model).
-  embedding_model_name: "BAAI/bge-base-en-v1.5"
+  embedding_model_name: "Qwen/Qwen3-Embedding-0.6B"
   # Path to FAISS index file (relative to project root).
   faiss_index_path: "data/main_faiss.index"
   # Path to FAISS ID map file (relative to project root).
