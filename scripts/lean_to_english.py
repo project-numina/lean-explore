@@ -34,7 +34,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 # --- Dependency Imports ---
 try:
-    from sqlalchemy import create_engine, inspect, select, update
+    from sqlalchemy import create_engine, inspect, select, update, exists
     from sqlalchemy.exc import SQLAlchemyError
     from sqlalchemy.orm import Session, selectinload, sessionmaker
 except ImportError:
@@ -280,10 +280,27 @@ def load_group_graph_data(
     stmt_group_deps_query = select(
         StatementGroupDependency.source_statement_group_id,
         StatementGroupDependency.target_statement_group_id,
-    ).where(
-        StatementGroupDependency.source_statement_group_id.in_(groups_to_process_ids),
-        StatementGroupDependency.target_statement_group_id.in_(groups_to_process_ids),
     )
+    if startover:
+        stmt_group_deps_query = stmt_group_deps_query.where(
+            exists().where(
+                StatementGroup.id == StatementGroupDependency.source_statement_group_id
+            ),
+            exists().where(
+                StatementGroup.id == StatementGroupDependency.target_statement_group_id
+            ),
+        )
+    else:
+        stmt_group_deps_query = stmt_group_deps_query.where(
+            exists().where(
+                StatementGroup.id == StatementGroupDependency.source_statement_group_id,
+                StatementGroup.informal_description.is_(None)
+            ),
+            exists().where(
+                StatementGroup.id == StatementGroupDependency.target_statement_group_id,
+                StatementGroup.informal_description.is_(None)
+            ),
+        )
     direct_group_dependencies = session.execute(stmt_group_deps_query).all()
     logger.info(
         "Loaded %d group dependency links for processing candidates.",
