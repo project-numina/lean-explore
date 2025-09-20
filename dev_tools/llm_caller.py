@@ -22,6 +22,9 @@ from google.api_core import (
 )  # For specific API errors
 from google.generativeai import types as genai_types
 
+# OpenAI Library
+from openai import AsyncOpenAI, OpenAI, RateLimitError, APIStatusError
+
 try:
     # Import both the config dictionary and the specific API key getter
     from .config import APP_CONFIG, get_gemini_api_key
@@ -110,8 +113,8 @@ class ModelCostInfo:
     output_cost_per_million_units: float
 
 
-class GeminiCostTracker:
-    """Tracks API usage and estimates costs for Google Gemini models.
+class LLMCostTracker:
+    """Tracks API usage and estimates costs for models.
 
     This class maintains counts of API calls, input/output units (tokens),
     and calculates estimated costs based on predefined rates per million units.
@@ -126,7 +129,7 @@ class GeminiCostTracker:
     """
 
     def __init__(self, model_costs_override: Optional[Dict[str, Any]] = None):
-        """Initializes the GeminiCostTracker.
+        """Initializes the CostTracker.
 
         Loads model cost information primarily from APP_CONFIG['costs']. An
         optional override dictionary can be provided. Initializes internal
@@ -298,9 +301,17 @@ class GeminiCostTracker:
         return summary
 
 
+class GeminiCostTracker(LLMCostTracker):
+    """Specialized CostTracker for Gemini models.
+
+    Inherits from CostTracker without modification, serving as a semantic
+    alias for clarity when tracking costs specifically for Gemini API usage.
+    """
+
+    pass
+
+
 # --- Gemini Client ---
-
-
 class GeminiClient:
     """Client for Google Gemini API with retries and cost tracking.
 
@@ -1017,6 +1028,394 @@ class GeminiClient:
             if not isinstance(e, ValueError):
                 raise Exception(
                     f"API call to embedding model '{effective_model}' failed after "
+                    "retries or during processing."
+                ) from e
+            else:
+                raise e  # Re-raise the original ValueError
+
+
+#  --- OpenAI Client ---
+class OpenAIClient:
+    """Client for OpenAI API with retries and cost tracking.
+
+    Provides asynchronous methods (`generate`, `embed_content`) to interact
+    with OpenAI style API and embedding models. Includes automatic retries on
+    transient errors (like rate limits or server issues) with exponential
+    backoff. Integrates with `CostTracker` to monitor API usage and estimate
+    costs. Configuration is loaded from APP_CONFIG (via config_loader) or
+    passed arguments.
+
+    Attributes:
+        api_key (str): The OpenAI API key being used.
+        base_url (str): The base URL for the OpenAI API (for custom endpoints).
+        default_generation_model (str): The default model used for `generate` calls.
+        default_embedding_model (str): The default model used for `embed_content` calls.
+        max_retries (int): The maximum number of retry attempts for failed API calls.
+        backoff_factor (float): The base factor for exponential backoff delays between
+            retries.
+        cost_tracker (CostTracker): The instance used for tracking usage and costs.
+
+    Raises:
+        ValueError: If the API key or default generation model is missing (and
+            not found via config loader or environment variables).
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        default_generation_model: Optional[str] = None,
+        max_retries: Optional[int] = None,
+        backoff_factor: Optional[float] = None,
+        cost_tracker: Optional[LLMCostTracker] = None,
+    ):
+        """Initializes the OpenAI Client.
+
+        Configures the client using provided arguments, falling back to values
+        from APP_CONFIG (loaded by config_loader.py) or hardcoded defaults.
+        Sets up the API key, default models, retry parameters, and cost tracker.
+        Configures the underlying `openai` library.
+
+        Args:
+            api_key (Optional[str]): OpenAI API key. If None, reads from
+                `OPENAI_API_KEY` environment variable via `get_openai_api_key`.
+            base_url (Optional[str]): Base URL for OpenAI API. If None, reads from
+                `APP_CONFIG['llm']['openai_base_url']`
+            default_generation_model (Optional[str]): Default model name for
+                generation (e.g., "gpt-4"). If None, reads from
+                `APP_CONFIG['llm']['generation_model']`.
+            max_retries (Optional[int]): Maximum retry attempts for API calls.
+                If None, reads from `APP_CONFIG['llm']['retries']` or uses
+                `FALLBACK_MAX_RETRIES`. Must be non-negative.
+            backoff_factor (Optional[float]): Base factor for exponential backoff
+                delay (seconds). If None, reads from `APP_CONFIG['llm']['backoff']`
+                or uses `FALLBACK_BACKOFF_FACTOR`. Must be non-negative.
+            cost_tracker (Optional[GeminiCostTracker]): An instance of
+                `GeminiCostTracker` to record usage. If None, a new instance
+                is created internally using costs from APP_CONFIG.
+        """
+        # --- Configuration Loading ---
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "OpenAI API key is missing. Set via argument, OPENAI_API_KEY "
+                "environment variable, or ensure config loader works."
+            )
+
+        self.base_url = base_url or APP_CONFIG.get("llm", {}).get("openai_base_url")
+
+        # constuct openai client
+        self.openai_client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+
+        # Get from arg, then APP_CONFIG['llm']['generation_model']
+        _config_gen_model = APP_CONFIG.get("llm", {}).get("generation_model")
+        self.default_generation_model = default_generation_model or _config_gen_model
+        if not self.default_generation_model:
+            raise ValueError(
+                "Default generation model is missing. Set via argument "
+                "or in config file ('llm.generation_model')."
+            )
+
+        # Max Retries
+        # Get from arg, then APP_CONFIG['llm']['retries'], then fallback constant
+        _config_retries = APP_CONFIG.get("llm", {}).get("retries")
+        # Check if config value is valid, otherwise use fallback
+        if isinstance(_config_retries, int) and _config_retries >= 0:
+            _effective_retries = _config_retries
+        else:
+            _effective_retries = FALLBACK_MAX_RETRIES
+            if (
+                _config_retries is not None
+            ):  # Warn if config value was present but invalid
+                warnings.warn(
+                    f"Invalid 'llm.retries' value in config: "
+                    f"'{_config_retries}'. Using default {FALLBACK_MAX_RETRIES}."
+                )
+
+        # Argument overrides config/default
+        self.max_retries = (
+            max_retries if max_retries is not None else _effective_retries
+        )
+        self.max_retries = max(0, self.max_retries)  # Ensure non-negative
+
+        # Backoff Factor
+        # Get from arg, then APP_CONFIG['llm']['backoff'], then fallback constant
+        _config_backoff = APP_CONFIG.get("llm", {}).get("backoff")
+        # Check if config value is valid, otherwise use fallback
+        if isinstance(_config_backoff, (float, int)) and _config_backoff >= 0:
+            _effective_backoff = float(_config_backoff)
+        else:
+            _effective_backoff = FALLBACK_BACKOFF_FACTOR
+            if (
+                _config_backoff is not None
+            ):  # Warn if config value was present but invalid
+                warnings.warn(
+                    f"Invalid 'llm.backoff' value in config: "
+                    f"'{_config_backoff}'. Using default {FALLBACK_BACKOFF_FACTOR}."
+                )
+
+        # Argument overrides config/default
+        self.backoff_factor = (
+            backoff_factor if backoff_factor is not None else _effective_backoff
+        )
+        self.backoff_factor = max(0.0, self.backoff_factor)  # Ensure non-negative
+
+        # --- Initialization ---
+        # Pass costs from APP_CONFIG to the tracker if no override is provided
+        self.cost_tracker = (
+            cost_tracker
+            if cost_tracker is not None
+            else LLMCostTracker(model_costs_override=APP_CONFIG.get("costs"))
+        )
+
+    # --- Private Helper for Retries ---
+    async def _execute_with_retry(
+        self,
+        api_call_func: Callable[..., Any],
+        *args: Any,
+        _model_name_for_log: str = "unknown_model",
+        **kwargs: Any,
+    ) -> Any:
+        """Executes a synchronous API call asynchronously with retry logic.
+
+        Wraps a synchronous OpenAI SDK function call (like
+        `model.generate_content` or `openai.embed_content`) using
+        `asyncio.to_thread`. Implements exponential backoff retries for specific
+        OpenAI API errors (rate limits, server errors) and general exceptions.
+
+        Args:
+            api_call_func (Callable[..., Any]): The synchronous OpeanAI SDK
+                function to call (e.g., `model_instance.generate_content`).
+            *args: Positional arguments to pass to `api_call_func`.
+            _model_name_for_log (str): The name of the model being called, used
+                for logging/warning messages.
+            **kwargs: Keyword arguments to pass to `api_call_func`.
+
+        Returns:
+            Any: The result returned by the successful `api_call_func`.
+
+        Raises:
+            APIStatusError: If a non-retryable API error (like 4xx client errors)
+            Exception: If the API call fails after all retry attempts due to
+                retryable API errors or other exceptions. The specific exception
+                encountered on the last attempt is raised.
+        """
+        final_error: Optional[Exception] = None
+        model_name = _model_name_for_log
+
+        total_attempts = self.max_retries + 1
+        for attempt in range(total_attempts):
+            try:
+                # Use asyncio.to_thread to run the synchronous SDK call in a
+                # separate thread
+                # Note: This assumes api_call_func itself is synchronous.
+                response = await asyncio.to_thread(api_call_func, *args, **kwargs)
+                return response  # Success
+
+            except RateLimitError as e:
+                # Specific handling for rate limits / quota errors - retryable
+                final_error = e
+                warnings.warn(
+                    f"API Quota/Rate Limit Error for {model_name} on attempt "
+                    f"{attempt + 1}/{total_attempts}: {e}"
+                )
+                # Continue to retry logic below
+
+            except APIStatusError as e:
+                # Catch other API errors (e.g., server errors, bad requests)
+                final_error = e
+                # Decide if retryable based on status code maybe? For now, retry most.
+                # 4xx errors are typically not retryable (Bad Request, Not Found,
+                # Invalid Argument)
+                # Allow 429 (ResourceExhausted, handled above) to be retryable.
+                status_code = getattr(e, "status_code", 0)
+                if 400 <= status_code < 500 and status_code != 429:
+                    warnings.warn(
+                        f"API Client Error (4xx) for {model_name} on attempt "
+                        f"{attempt + 1}/{total_attempts}: {e}. Not retrying."
+                    )
+                    break  # Don't retry most client errors
+                else:  # Retry server errors (5xx), 429, or unknown API errors
+                    warnings.warn(
+                        f"API Server/Retryable Error for {model_name} on attempt "
+                        f"{attempt + 1}/{total_attempts}: {e}"
+                    )
+                # Continue to retry logic below
+
+            except Exception as e:
+                # Catch broader exceptions (network issues, unexpected errors during
+                # async wrapper)
+                final_error = e
+                warnings.warn(
+                    f"Unexpected Error during API call for {model_name} on attempt "
+                    f"{attempt + 1}/{total_attempts}: {e}"
+                )
+                # Continue to retry logic below
+
+            # --- Retry Logic ---
+            if attempt < self.max_retries:
+                sleep_time = self.backoff_factor * (2**attempt)
+                retries_remaining = self.max_retries - attempt
+                warnings.warn(
+                    f"Retrying API call for {model_name} in {sleep_time:.2f} "
+                    f"seconds... ({retries_remaining} retries remaining)"
+                )
+                await asyncio.sleep(sleep_time)
+            else:
+                # This was the final attempt
+                warnings.warn(
+                    f"API call for {model_name} failed on the final attempt "
+                    f"({attempt + 1}/{total_attempts})."
+                )
+                break  # Exit loop after final attempt
+
+        # If loop finished without returning, raise the last captured error
+        if final_error is not None:
+            raise final_error
+        else:
+            # This case should ideally not be reached if the loop logic is correct
+            raise Exception(
+                f"Unknown error during API call to {model_name} after "
+                f"{total_attempts} attempts"
+            )
+
+    # --- Public API Methods ---
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        model: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        generation_config_override: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Generates content using a specified OpenAI model with retry logic.
+
+        Constructs the request with the prompt and optional system instruction
+        and generation config. Uses the `_execute_with_retry` helper to handle
+        the API call to the generative model. Processes the response to extract
+        the text content and records usage statistics if a cost tracker is
+        configured and usage metadata is available.
+
+        Args:
+            prompt (str): The main user prompt for content generation.
+            model (Optional[str]): The specific OpenAI model name to use
+                (e.g., "gpt-4"). If None, uses the client's
+                `default_generation_model`.
+            system_prompt (Optional[str]): An optional system instruction to guide
+                the model's behavior. Prepended to the user prompt.
+            generation_config_override (Optional[Dict[str, Any]]): A dictionary
+                containing generation parameters (like temperature, top_p,
+                max_tokens) to override the model's defaults. See
+                `openai.ChatCompletion.create` for options.
+
+        Returns:
+            str: The generated text content from the model.
+
+        Raises:
+            ValueError: If the specified model name is invalid or if the API
+                response structure is unexpected or lacks text content.
+            Exception: If the API call fails after all retry attempts (reraised
+                from `_execute_with_retry`).
+        """
+        effective_model = model or self.default_generation_model
+        gen_config = generation_config_override if generation_config_override else {}
+
+        # Construct messages list for chat completion
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            # Prepare arguments for openai.ChatCompletion.create
+            api_kwargs = {
+                "model": effective_model,
+                "messages": messages,
+                **gen_config,  # Include any generation config overrides
+            }
+
+            # Use the retry helper; openai.ChatCompletion.create is the sync function
+            # to wrap
+            response = await self._execute_with_retry(
+                self.openai_client.chat.completions.create,
+                _model_name_for_log=effective_model,  # Log arg
+                **api_kwargs,  # API args for ChatCompletion
+            )
+
+            # --- Process Response ---
+            generated_text = None
+            prompt_tokens = 0
+            completion_tokens = 0
+            usage_metadata = getattr(response, "usage", None)
+
+            # Attempt to access generated text safely
+            if (
+                response.choices
+                and len(response.choices) > 0
+                and response.choices[0].message
+                and hasattr(response.choices[0].message, "content")
+            ):
+                generated_text = response.choices[0].message.content
+            else:
+                raise ValueError(
+                    f"API call failed for {effective_model}: Received no valid "
+                    "text content in response structure."
+                )
+
+            # --- Token Counting & Cost Tracking ---
+            if usage_metadata:
+                try:
+                    prompt_tokens = getattr(usage_metadata, "prompt_tokens", 0)
+                    completion_tokens = getattr(usage_metadata, "completion_tokens", 0)
+                    # Ensure they are integers
+                    prompt_tokens = (
+                        int(prompt_tokens) if prompt_tokens is not None else 0
+                    )
+                    completion_tokens = (
+                        int(completion_tokens) if completion_tokens is not None else 0
+                    )
+                except (AttributeError, ValueError, TypeError) as e:
+                    warnings.warn(
+                        f"Error accessing token counts from usage metadata for "
+                        f"{effective_model}: {e}. Cost tracking may be inaccurate."
+                    )
+                    prompt_tokens = 0
+                    completion_tokens = 0
+
+                if self.cost_tracker:
+                    # Record usage: Map prompt_tokens -> input_units,
+                    # completion_tokens -> output_units
+                    self.cost_tracker.record_usage(
+                        effective_model, prompt_tokens, completion_tokens
+                    )
+            else:
+                warnings.warn(
+                    f"Response object for model '{effective_model}' lacks "
+                    f"'usage' metadata. Cost tracking may be inaccurate."
+                )
+
+            # Ensure we actually got some text and it's not just whitespace or null
+            if generated_text is None or not generated_text.strip():
+                raise ValueError(
+                    f"API call failed for {effective_model}: Received empty or "
+                    "whitespace-only text content. "
+                    f"finish reason: {response.choices[0].finish_reason}."
+                )
+
+            return generated_text
+
+        except ValueError as ve:
+            # Catch ValueErrors raised during response processing (empty content)
+            # These are considered definitive failures, don't wrap further
+            raise ve
+        except Exception as e:
+            # Catch errors from _execute_with_retry (after all retries failed)
+            # or potential errors during API response processing not caught above.
+            # Avoid wrapping ValueError from above again
+            if not isinstance(e, ValueError):
+                raise Exception(
+                    f"API call to generation model '{effective_model}' failed after "
                     "retries or during processing."
                 ) from e
             else:
