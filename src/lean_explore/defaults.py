@@ -31,7 +31,7 @@ LEAN_EXPLORE_TOOLCHAINS_BASE_DIR: Final[pathlib.Path] = (
 # In future enhancements, this could be determined dynamically
 # or from user configuration.
 # For now, it's set to the initial version of data provided ("0.1.0").
-DEFAULT_ACTIVE_TOOLCHAIN_VERSION: Final[str] = "0.2.0"
+DEFAULT_ACTIVE_TOOLCHAIN_VERSION: Final[str] = "0.1.0.numina"
 
 # Path to the data directory for the currently active toolchain version.
 # Example: ~/.lean_explore/data/toolchains/0.1.0/
@@ -70,12 +70,12 @@ DEFAULT_DB_URL: Final[str] = f"sqlite:///{DEFAULT_DB_PATH.resolve()}"
 
 # Default URL for the master manifest file on R2.
 R2_MANIFEST_DEFAULT_URL: Final[str] = (
-    "https://pub-48b75babc4664808b15520033423c765.r2.dev/manifest.json"
+    "https://raw.githubusercontent.com/project-numina/lean-explore/refs/heads/main/manifest.json"
 )
 
 # Base URL for accessing assets on R2. Specific file paths from the manifest
 # will be appended to this base.
-R2_ASSETS_BASE_URL: Final[str] = "https://pub-48b75babc4664808b15520033423c765.r2.dev/"
+R2_ASSETS_BASE_URL: Final[str] = "https://github.com/project-numina/lean-explore"
 
 # Filename for storing the currently selected active toolchain version.
 # This file will reside in LEAN_EXPLORE_USER_DATA_DIR.
@@ -89,7 +89,7 @@ ACTIVE_TOOLCHAIN_CONFIG_FILE_PATH: Final[pathlib.Path] = (
 
 
 # --- Default Embedding Model ---
-DEFAULT_EMBEDDING_MODEL_NAME: Final[str] = "BAAI/bge-base-en-v1.5"
+DEFAULT_EMBEDDING_MODEL_NAME: Final[str] = "Qwen/Qwen3-Embedding-0.6B"
 
 
 # --- Default Search Parameters ---
