@@ -43,7 +43,7 @@ logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 
 
 # --- Constants ---
-DEFAULT_MODEL_NAME = "BAAI/bge-base-en-v1.5"
+DEFAULT_MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
 DEFAULT_EMBEDDING_BATCH_SIZE = 64
 DEFAULT_OUTPUT_FILENAME = "generated_embeddings.npz"
 
@@ -261,6 +261,16 @@ def generate_embeddings_from_file(
         batch_size=batch_size,
         show_progress_bar=True,  # tqdm progress bar
         convert_to_numpy=True,
+        # device=[
+        #     "cuda:0",
+        #     "cuda:1",
+        #     "cuda:2",
+        #     "cuda:3",
+        #     "cuda:4",
+        #     "cuda:5",
+        #     "cuda:6",
+        #     "cuda:7",
+        # ],
     )
     logger.info(
         "Generated %d embeddings, each with dimension %d.",
