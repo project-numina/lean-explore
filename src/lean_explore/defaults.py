@@ -75,7 +75,7 @@ R2_MANIFEST_DEFAULT_URL: Final[str] = (
 
 # Base URL for accessing assets on R2. Specific file paths from the manifest
 # will be appended to this base.
-R2_ASSETS_BASE_URL: Final[str] = "https://github.com/project-numina/lean-explore"
+R2_ASSETS_BASE_URL: Final[str] = "https://lean-explore-data.s3.us-east-1.amazonaws.com"
 
 # Filename for storing the currently selected active toolchain version.
 # This file will reside in LEAN_EXPLORE_USER_DATA_DIR.

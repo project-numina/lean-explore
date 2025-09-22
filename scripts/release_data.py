@@ -140,7 +140,7 @@ def release(version: str, description: str):
     manifest["toolchains"][version] = {
         "description": description or f"Release for version {version}",
         "release_date": datetime.now().strftime("%Y-%m-%d"),
-        "assets_base_path_r2": f"releases/download/{version}/",
+        "assets_base_path_r2": f"releases/{version}/",
         "files": files,
     }
 

@@ -5,7 +5,7 @@
         "0.1.0.numina": {
             "description": "Release for version 0.1.0.numina",
             "release_date": "2025-09-21",
-            "assets_base_path_r2": "releases/download/0.1.0.numina/",
+            "assets_base_path_r2": "releases/0.1.0.numina/",
             "files": [
                 {
                     "local_name": "lean_explore_data.db",
