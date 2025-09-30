@@ -8,6 +8,7 @@ performing searches and retrieving detailed information.
 """
 
 import asyncio
+import os
 from typing import List, Optional, Union, overload
 
 import httpx
@@ -18,7 +19,9 @@ from lean_explore.shared.models.api import (
     APISearchResultItem,
 )
 
-_DEFAULT_API_BASE_URL = "https://www.leanexplore.com/api/v1"
+_DEFAULT_API_BASE_URL = (
+    os.getenv("LEAN_EXPLORE_BASE_URL") or "https://www.leanexplore.com/api/v1"
+)
 
 
 class Client:
