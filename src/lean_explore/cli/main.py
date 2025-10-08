@@ -13,6 +13,7 @@ from typing import List, Optional
 
 import httpx
 import typer
+import uvicorn
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -590,6 +591,47 @@ async def get_dependencies_command(
             f"[bold red]Network Error: Could not connect to the API. {e}[/bold red]"
         )
         raise typer.Exit(code=1)
+    except Exception as e:
+        error_console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
+@app.command("server")
+def server_command(
+    host: str = typer.Option(
+        "0.0.0.0",
+        "--host",
+        help="Host to run the server on.",
+        case_sensitive=False,
+    ),
+    port: int = typer.Option(
+        8000,
+        "--port",
+        help="Port to run the server on.",
+        case_sensitive=False,
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Enable debug mode.",
+        case_sensitive=False,
+    ),
+):
+    """Run the Lean Explore API server.
+
+    Args:
+        host: The host to run the server on. Default is '0.0.0.0'.
+        port: The port to run the server on. Default is 8000.
+        debug: Whether to enable debug mode. Default is False.
+    """
+    try:
+        uvicorn.run(
+            "lean_explore.api.server:app",
+            host=host,
+            port=port,
+            reload=debug,
+            log_level="debug" if debug else "info",
+        )
     except Exception as e:
         error_console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
         raise typer.Exit(code=1)
