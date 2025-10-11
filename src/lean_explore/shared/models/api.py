@@ -35,6 +35,7 @@ class APISearchResultItem(BaseModel):
         primary_declaration: Information about the primary declaration.
         source_file: The source file where the statement group is located.
         range_start_line: Start line of statement group in source file.
+        range_end_line: End line of statement group in source file.
         display_statement_text: Display-friendly statement text, if available.
         statement_text: The full canonical statement text.
         docstring: The docstring associated with the statement group, if available.
