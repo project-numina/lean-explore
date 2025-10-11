@@ -70,7 +70,7 @@ DEFAULT_DB_URL: Final[str] = f"sqlite:///{DEFAULT_DB_PATH.resolve()}"
 
 # Default URL for the master manifest file on R2.
 R2_MANIFEST_DEFAULT_URL: Final[str] = (
-    "https://raw.githubusercontent.com/project-numina/lean-explore/refs/heads/main/manifest.json"
+    "https://lean-explore-data.s3.us-east-1.amazonaws.com/releases/manifest.json"
 )
 
 # Base URL for accessing assets on R2. Specific file paths from the manifest
