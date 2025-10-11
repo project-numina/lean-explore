@@ -1,9 +1,9 @@
 {
-    "latest_manifest_version": "0.1.0.numina",
-    "default_toolchain": "0.1.0.numina",
+    "latest_manifest_version": "0.2.0.numina",
+    "default_toolchain": "0.2.0.numina",
     "toolchains": {
         "0.1.0.numina": {
-            "description": "Release for version 0.1.0.numina",
+            "description": "Release for version 0.1.0.numina: Mathlib-v4.21",
             "release_date": "2025-09-21",
             "assets_base_path_r2": "releases/0.1.0.numina/",
             "files": [
@@ -27,6 +27,34 @@
                     "sha256": "db80a96837bce5617f9e6c04d08278775d07c60006ef4a7c1b60795c84d37756",
                     "size_bytes_compressed": 1836124,
                     "size_bytes_uncompressed": 16124813
+                }
+            ]
+        },
+        "0.2.0.numina": {
+            "description": "Release for version 0.2.0.numina: Mathlib-v4.23, FLT-v4.23",
+            "release_date": "2025-10-11",
+            "assets_base_path_r2": "releases/0.2.0.numina/",
+            "files": [
+                {
+                    "local_name": "lean_explore_data.db",
+                    "remote_name": "lean_explore_data.db.gz",
+                    "sha256": "83220f12e0db1efc66e800f568ad3a0c3c6db07eb8686080052f007f7d2f0bdc",
+                    "size_bytes_compressed": 613557469,
+                    "size_bytes_uncompressed": 2176700416
+                },
+                {
+                    "local_name": "main_faiss.index",
+                    "remote_name": "main_faiss.index.gz",
+                    "sha256": "9924d2cefa42636e46ad1e3fc6645ab039896e5dc8924d6d4fb0443b0a22bef8",
+                    "size_bytes_compressed": 2762720097,
+                    "size_bytes_uncompressed": 2979672109
+                },
+                {
+                    "local_name": "faiss_ids_map.json",
+                    "remote_name": "faiss_ids_map.json.gz",
+                    "sha256": "d46d419165cdf10be158c9c24375e3ea4306fce3a173a61dd96b54cb36e28c4d",
+                    "size_bytes_compressed": 1876781,
+                    "size_bytes_uncompressed": 16495879
                 }
             ]
         }
