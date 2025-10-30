@@ -37,7 +37,8 @@ dependencies = [
     "nltk>=3.6",
     "rank-bm25>=0.2.2",
 
-    # API Client / Shared Data Models
+    # API Client / API Server / Shared Data Models
+    "fastapi>=0.120.2",
     "httpx>=0.23.0",
     "pydantic>=2.0",
 
