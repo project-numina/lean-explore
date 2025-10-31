@@ -1,4 +1,5 @@
 """FastAPI server for Lean Explore API."""
+
 import asyncio
 import logging
 import sys
@@ -63,6 +64,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[Dict]:
 
 
 app = FastAPI(title="Lean Explore API", lifespan=lifespan, root_path="/api/v1")
+
+
+@app.get("/heartbeat")
+async def heartbeat() -> Dict[str, str]:
+    """Simple heartbeat endpoint to check if the server is running."""
+    return {"status": "ok"}
 
 
 @app.get("/search")
