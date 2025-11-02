@@ -54,8 +54,8 @@ class APISearchResultItem(BaseModel):
         ...,
         description="Line number of the start of statement group in its source file.",
     )
-    range_end_line: int = Field(
-        ...,
+    range_end_line: Optional[int] = Field(
+        None,
         description="Line number of the end of statement group in its source file.",
     )
     display_statement_text: Optional[str] = Field(

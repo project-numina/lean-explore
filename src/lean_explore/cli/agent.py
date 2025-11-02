@@ -123,6 +123,7 @@ agent_cli_app = typer.Typer(
 
 logger = logging.getLogger(__name__)
 console = Console()
+error_console = Console(stderr=True)
 CHAT_CONTENT_WIDTH = 76  # Consistent with main.py's PANEL_CONTENT_WIDTH
 
 
@@ -193,83 +194,72 @@ def _handle_server_connection_error(
     is_timeout_error = "timed out" in error_str or "timeout" in error_str
 
     if is_timeout_error:
-        console.print(
+        error_console.print(
             Text.from_markup(
                 "[bold red]Error: The Lean Explore server failed to start "
                 "or respond promptly.[/bold red]"
-            ),
-            stderr=True,
+            )
         )
         if lean_backend_type == "local":
-            console.print(
+            error_console.print(
                 Text.from_markup(
                     "[yellow]This often occurs with the 'local' backend due to missing "
                     "or corrupted data files.[/yellow]"
-                ),
-                stderr=True,
+                )
             )
-            console.print(
-                Text.from_markup("[yellow]Please try the following steps:[/yellow]"),
-                stderr=True,
+            error_console.print(
+                Text.from_markup("[yellow]Please try the following steps:[/yellow]")
             )
-            console.print(
+            error_console.print(
                 Text.from_markup(
                     "[yellow]  1. Run 'leanexplore data fetch' to download or update "
                     "the required data.[/yellow]"
-                ),
-                stderr=True,
+                )
             )
-            console.print(
-                Text.from_markup("[yellow]  2. Try this chat command again.[/yellow]"),
-                stderr=True,
+            error_console.print(
+                Text.from_markup("[yellow]  2. Try this chat command again.[/yellow]")
             )
-            console.print(
+            error_console.print(
                 Text.from_markup(
                     "[yellow]  3. If the problem persists, run 'leanexplore mcp serve "
                     "--backend local --log-level DEBUG' directly in another terminal "
                     "to see detailed server startup logs.[/yellow]"
-                ),
-                stderr=True,
+                )
             )
         else:  # api backend or other cases
-            console.print(
+            error_console.print(
                 Text.from_markup(
                     "[yellow]Please check your network connection and ensure the API "
                     "server is accessible.[/yellow]"
-                ),
-                stderr=True,
+                )
             )
     elif isinstance(error, UserError):
-        console.print(
+        error_console.print(
             Text.from_markup(
                 f"[bold red]Error: SDK usage problem during {context}: "
                 f"{error}[/bold red]"
-            ),
-            stderr=True,
+            )
         )
     elif isinstance(error, AgentsException):
-        console.print(
+        error_console.print(
             Text.from_markup(
                 f"[bold red]Error: An SDK error occurred during {context}: "
                 f"{error}[/bold red]"
-            ),
-            stderr=True,
+            )
         )
     else:
-        console.print(
+        error_console.print(
             Text.from_markup(
                 f"[bold red]An unexpected error occurred during {context}: "
                 f"{error}[/bold red]"
-            ),
-            stderr=True,
+            )
         )
 
     if debug_mode:
-        console.print(
+        error_console.print(
             Text.from_markup(
                 f"[magenta]Error Details ({type(error).__name__}): {error}[/magenta]"
-            ),
-            stderr=True,
+            )
         )
     raise typer.Exit(code=1)
 
@@ -321,11 +311,10 @@ async def _run_agent_session(
             "Please enter your OpenAI API key", hide_input=True
         )
         if not openai_api_key:
-            console.print(
+            error_console.print(
                 Text.from_markup(
                     "[bold red]OpenAI API key cannot be empty. Exiting.[/bold red]"
-                ),
-                stderr=True,
+                )
             )
             raise typer.Exit(code=1)
         logger.info("Using OpenAI API key provided via prompt.")
@@ -340,9 +329,8 @@ async def _run_agent_session(
                         )
                     )
                 else:
-                    console.print(
-                        Text.from_markup("[red]Failed to save OpenAI API key.[/red]"),
-                        stderr=True,
+                    error_console.print(
+                        Text.from_markup("[red]Failed to save OpenAI API key.[/red]")
                     )
             else:
                 console.print("OpenAI API key will be used for this session only.")
@@ -363,8 +351,8 @@ async def _run_agent_session(
             f"{internal_server_script_path}"
         )
         logger.error(error_msg)
-        console.print(
-            Text.from_markup(f"[bold red]Error: {error_msg}[/bold red]"), stderr=True
+        error_console.print(
+            Text.from_markup(f"[bold red]Error: {error_msg}[/bold red]")
         )
         raise typer.Exit(code=1)
 
@@ -375,8 +363,8 @@ async def _run_agent_session(
             "Ensure Python is correctly installed and in your PATH."
         )
         logger.error(error_msg)
-        console.print(
-            Text.from_markup(f"[bold red]Error: {error_msg}[/bold red]"), stderr=True
+        error_console.print(
+            Text.from_markup(f"[bold red]Error: {error_msg}[/bold red]")
         )
         raise typer.Exit(code=1)
 
@@ -416,12 +404,11 @@ async def _run_agent_session(
                 "Please enter your Lean Explore API key", hide_input=True
             )
             if not effective_lean_api_key:
-                console.print(
+                error_console.print(
                     Text.from_markup(
                         "[bold red]Lean Explore API key cannot be empty for 'api' "
                         "backend. Exiting.[/bold red]"
-                    ),
-                    stderr=True,
+                    )
                 )
                 raise typer.Exit(code=1)
             logger.info("Using Lean Explore API key provided via prompt.")
@@ -437,11 +424,10 @@ async def _run_agent_session(
                             )
                         )
                     else:
-                        console.print(
+                        error_console.print(
                             Text.from_markup(
                                 "[red]Failed to save Lean Explore API key.[/red]"
-                            ),
-                            stderr=True,
+                            )
                         )
                 else:
                     console.print(
@@ -457,8 +443,10 @@ async def _run_agent_session(
                 )
 
     # --- MCP Server Setup ---
+    # Run as module to ensure proper Python path resolution
     mcp_server_args = [
-        str(internal_server_script_path),
+        "-m",
+        "lean_explore.mcp.server",
         "--backend",
         lean_backend_type,
         "--log-level",
@@ -467,12 +455,19 @@ async def _run_agent_session(
     if lean_backend_type == "api" and effective_lean_api_key:
         mcp_server_args.extend(["--api-key", effective_lean_api_key])
 
+    # Use project root as working directory to ensure proper module imports
+    # Find project root by looking for pyproject.toml or setup.py
+    project_root = pathlib.Path(__file__).parent.parent.parent.parent
+    if not (project_root / "pyproject.toml").exists():
+        # Fallback: use script's parent directory
+        project_root = internal_server_script_path.parent
+
     lean_explore_mcp_server = MCPServerStdio(
         name="LeanExploreSearchServer",
         params={
             "command": python_executable,
             "args": mcp_server_args,
-            "cwd": str(internal_server_script_path.parent),
+            "cwd": str(project_root),
         },
         cache_tools_list=True,
         client_session_timeout_seconds=10.0,
@@ -754,8 +749,7 @@ async def agent_chat_command(
                     "is disabled (config module not found). OPENAI_API_KEY env "
                     "var is not set. You will be prompted if no key is found "
                     "in config.[/yellow]"
-                ),
-                stderr=True,
+                )
             )
         if lean_backend == "api" and not (
             lean_api_key or os.getenv("LEAN_EXPLORE_API_KEY")
@@ -766,8 +760,7 @@ async def agent_chat_command(
                     "API key is disabled (config module not found). If using "
                     "--backend api, and key is not in env or via option, you "
                     "will be prompted.[/yellow]"
-                ),
-                stderr=True,
+                )
             )
 
     resolved_lean_api_key = lean_api_key
