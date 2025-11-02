@@ -72,6 +72,7 @@ def _prepare_mcp_result_item(backend_item: APISearchResultItem) -> APISearchResu
         else None,
         source_file=backend_item.source_file,
         range_start_line=backend_item.range_start_line,
+        range_end_line=backend_item.range_end_line,
         statement_text=backend_item.statement_text,
         docstring=backend_item.docstring,
         informal_description=backend_item.informal_description,

@@ -72,6 +72,7 @@ components:
         - primary_declaration
         - source_file
         - range_start_line
+        - range_end_line
         - statement_text
       properties:
         id:
@@ -89,6 +90,10 @@ components:
           type: integer
           description: Start line of the statement group in its source file.
           example: 78
+        range_end_line:
+          type: integer
+          description: End line of the statement group in its source file.
+          example: 82
         display_statement_text:
           type: string
           nullable: true
