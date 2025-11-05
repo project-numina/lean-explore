@@ -702,7 +702,7 @@ async def process_statement_groups_with_llm(
 
     api_key = get_openai_api_key()
     if not api_key:
-        logger.error("GEMINI_API_KEY not found in environment or configuration.")
+        logger.error("OPENAI_API_KEY not found in environment or configuration.")
         return False
     client: OpenAIClient
     try:
