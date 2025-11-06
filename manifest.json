@@ -1,6 +1,6 @@
 {
-    "latest_manifest_version": "0.3.0.numina",
-    "default_toolchain": "0.3.0.numina",
+    "latest_manifest_version": "0.4.0.numina",
+    "default_toolchain": "0.4.0.numina",
     "toolchains": {
         "0.1.0.numina": {
             "description": "Release for version 0.1.0.numina: Mathlib-v4.21",
@@ -83,6 +83,34 @@
                     "sha256": "68a64f80781b4257b64659623494bd1b0468ded15dfb748167a8c42516996ba1",
                     "size_bytes_compressed": 1907319,
                     "size_bytes_uncompressed": 16776672
+                }
+            ]
+        },
+        "0.4.0.numina": {
+            "description": "Release for version 0.4.0.numina, with v4.24: Mathlib, FLT, PhysLean, Std, Init, Lean",
+            "release_date": "2025-11-06",
+            "assets_base_path_r2": "releases/0.4.0.numina/",
+            "files": [
+                {
+                    "local_name": "lean_explore_data.db",
+                    "remote_name": "lean_explore_data.db.gz",
+                    "sha256": "e9c47da6699175e3e90f1177e1e579379ca9f7444c21e924ac7ea69adc5e0731",
+                    "size_bytes_compressed": 941108464,
+                    "size_bytes_uncompressed": 3496382464
+                },
+                {
+                    "local_name": "main_faiss.index",
+                    "remote_name": "main_faiss.index.gz",
+                    "sha256": "648fd47630c8f522eb5b9ebf45db2f0381b3264c561b87bf0726b92b5eeee6ba",
+                    "size_bytes_compressed": 3613071618,
+                    "size_bytes_uncompressed": 3894124589
+                },
+                {
+                    "local_name": "faiss_ids_map.json",
+                    "remote_name": "faiss_ids_map.json.gz",
+                    "sha256": "ddb598d4a422fdbca2dae00c85e0bf38f3eefb83306bb03069286abd6ea27b7b",
+                    "size_bytes_compressed": 2455711,
+                    "size_bytes_uncompressed": 21669284
                 }
             ]
         }
