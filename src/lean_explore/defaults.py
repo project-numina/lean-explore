@@ -31,7 +31,7 @@ LEAN_EXPLORE_TOOLCHAINS_BASE_DIR: Final[pathlib.Path] = (
 # In future enhancements, this could be determined dynamically
 # or from user configuration.
 # For now, it's set to the initial version of data provided ("0.1.0").
-DEFAULT_ACTIVE_TOOLCHAIN_VERSION: Final[str] = "0.4.0.numina"
+DEFAULT_ACTIVE_TOOLCHAIN_VERSION: Final[str] = "0.5.0.numina"
 
 # Path to the data directory for the currently active toolchain version.
 # Example: ~/.lean_explore/data/toolchains/0.1.0/
