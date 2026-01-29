@@ -9,13 +9,15 @@ import Lean.Environment         -- Provides `Environment` and related methods.
 import Lean.Data.Lsp.Internal   -- Provides `DeclarationRanges` (via `References`).
 import Lean.Data.Position       -- Provides `Position`.
 import Lean.Util.Path           -- Provides `FilePath` operations.
-import Lean.Util.Paths          -- Provides `initSrcSearchPath`.
+-- import Lean.Util.Paths          -- Provides `initSrcSearchPath`.
 import Lean.Server.References   -- Provides `findDeclarationRanges?`.
 import Lean.Meta.Basic          -- Provides `MetaM`.
 import Lean.Linter              -- Provides `isDeprecated`.
 import Lean.Modifiers           -- Provides `isProtected`.
 import Lean.ProjFns             -- Provides `Environment.isProjectionFn`.
 import Std.Data.HashMap
+import FLT
+-- import PhysLean
 
 open Lean Meta Std System IO FS Server References Linter -- Common Lean utilities.
 
@@ -226,8 +228,8 @@ unsafe def main : IO Unit := do
     let imports : Array Import := #[
       { module := `Mathlib },
       { module := `Batteries },
-      { module := `PhysLean },
-      { module := `Std }
+      { module := `Std },
+      { module := `FLT },
     ]
 
     -- Import specified modules for analysis, configuring options like heartbeat limit.
@@ -238,10 +240,10 @@ unsafe def main : IO Unit := do
     IO.println s!"Specified modules imported successfully. Environment created."
 
     let targetRootNames : NameSet := .ofList [
-      `Mathlib, `Batteries, `PhysLean, `Std, `Init, `Lean
+      `Mathlib, `Std, `Lean, `Init, `FLT
     ]
 
-    let targetRootNamesList : List Name := [`Mathlib, `Batteries, `PhysLean, `Std, `Init, `Lean] -- Keep an ordered list for printing
+    let targetRootNamesList : List Name := [`Mathlib, `Std, `Lean, `Init, `FLT] -- Keep an ordered list for printing
     let initialCountsByRoot : Std.HashMap Name Nat := Id.run do
       let mut map := Std.HashMap.emptyWithCapacity targetRootNamesList.length
       for rootName in targetRootNamesList do

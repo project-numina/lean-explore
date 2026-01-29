@@ -5,6 +5,8 @@ import Lake
 import Lean.Data.Json.FromToJson -- For parsing JSON configuration.
 import Std.Data.HashMap          -- For counting files per library
 
+set_option linter.unusedVariables false
+
 /-!
 # Lean File Tactic and Premise Data Extractor
 
@@ -51,10 +53,10 @@ open Lean Elab System IO FS Lean.FromJson
 set_option maxHeartbeats 2000000  -- 10x the default maxHeartbeats.
 
 
-instance : ToJson Substring where
+instance : ToJson Substring.Raw where
   toJson s := toJson s.toString
 
-instance : ToJson String.Pos where
+instance : ToJson String.Pos.Raw where
   toJson n := toJson n.1
 
 deriving instance ToJson for SourceInfo
@@ -86,8 +88,8 @@ Represents the trace of a single tactic application.
 structure TacticTrace where
   stateBefore: String        /- The tactic state before the tactic was applied. -/
   stateAfter: String         /- The tactic state after the tactic was applied. -/
-  pos: String.Pos            /- The start position of the tactic's syntax in the source file. -/
-  endPos: String.Pos         /- The end position of the tactic's syntax in the source file. -/
+  pos: String.Pos.Raw            /- The start position of the tactic's syntax in the source file. -/
+  endPos: String.Pos.Raw         /- The end position of the tactic's syntax in the source file. -/
   deriving ToJson
 
 
@@ -110,8 +112,8 @@ full byte span in the source file.
 -/
 structure CommandSyntaxWithSpan where
   commandSyntax : Syntax         /- The raw `Syntax` object for the command. -/
-  byteStart : Option String.Pos  /- The UTF-8 byte offset of the start of the command's syntax. `none` if not determinable. -/
-  byteEnd : Option String.Pos    /- The UTF-8 byte offset of the end of the command's syntax. `none` if not determinable. -/
+  byteStart : Option String.Pos.Raw  /- The UTF-8 byte offset of the start of the command's syntax. `none` if not determinable. -/
+  byteEnd : Option String.Pos.Raw    /- The UTF-8 byte offset of the end of the command's syntax. `none` if not determinable. -/
   deriving ToJson
 
 /--
@@ -207,7 +209,7 @@ def ppGoals (ctx : ContextInfo) (goals : List MVarId) : IO String :=
     return "no goals"
   else
     let fmt := ctx.runMetaM {} (return Std.Format.prefixJoin "\n\n" (← goals.mapM (ppGoal ·)))
-    return (← fmt).pretty.trim
+    return (← fmt).pretty.trimAscii.toString
 
 
 end Pp
@@ -328,11 +330,20 @@ def toSrcDir! (oleanPath : FilePath) (ext : String) : IO FilePath := do
         relativePathStr.drop sep.length
       else
         relativePathStr
-    let relativePath := FilePath.mk relStr
-    -- The source path needs to be relative to toolchainSrcParentDir
+    let relativePath := FilePath.mk relStr.toString
+-- The source path needs to be relative to toolchainSrcParentDir
     -- e.g. if olean is .../lib/lean/Init/Core.olean, source is .../src/lean/Init/Core.lean
     let srcPath := toolchainSrcParentDir / relativePath
     return System.FilePath.withExtension srcPath ext
+
+    -- let actualSrcParentDir :=
+    --   if relativePath.components.head? == some "Lake" then
+    --     (sysroot / "src" / "lean" / "lake").normalize
+    --   else
+    --     toolchainSrcParentDir -- 这是 (sysroot / "src" / "lean")
+
+    -- let srcPath := actualSrcParentDir / relativePath
+    -- return System.FilePath.withExtension srcPath ext
 
   let trimmedOleanPath := trim oleanPath
 
@@ -567,7 +578,7 @@ def getImports (header: TSyntax ``Lean.Parser.Module.header) : IO String := do
       s := s ++ "\n" ++ leanPath.toString
     else if ¬(oleanPath.toString.endsWith "/lib/lean/Init.olean") && ¬(oleanPath.toString.endsWith "\\lib\\lean\\Init.olean") then -- Avoids Init from core.
       s := s ++ "\n" ++ leanPath.toString
-  return s.trim
+  return s.trimAscii.toString
 
 
 /--
@@ -668,11 +679,11 @@ def getTargetLibraries (config : ExtractorConfig) : IO (Array LibraryToProcess) 
   libs := libs.push { name := "Std", srcRootDir       := ← Path.toAbsolute (toolchainSrcPath / "lean" / "Std") }
   libs := libs.push { name := "Lean", srcRootDir      := ← Path.toAbsolute (toolchainSrcPath / "lean" / "Lean") }
 
-  -- Lake packages
+  -- Lake packag
   let packagesDirPath ← Path.toAbsolute Path.packagesDir
   libs := libs.push { name := "Batteries", srcRootDir := packagesDirPath / "batteries" }
   libs := libs.push { name := "Mathlib", srcRootDir   := packagesDirPath / "mathlib" }
-  libs := libs.push { name := "PhysLean", srcRootDir  := packagesDirPath / "PhysLean" }
+  libs := libs.push { name := "FLT", srcRootDir  := packagesDirPath / "FLT" }
 
   -- Verify existence of srcRootDir for all configured libraries
   let mut validLibs : Array LibraryToProcess := #[]
@@ -792,7 +803,7 @@ def processProject : IO Unit := do
         else
           -- .ast.json does not exist, so add this file to the processing queue.
           let depPathsPath ← getTargetOutputPath baseDojoDir lib.name lib.srcRootDir leanFilePathAbs "dep_paths"
-          let taskDescr := s!"{lib.name} / {leanFilePathAbs.fileName.getD "file"} (module: {fullModuleName.toString.takeRight 40})"
+          let taskDescr := s!"{lib.name} / {leanFilePathAbs.fileName.getD "file"} (module: {fullModuleName.toString.takeEnd 40})"
           filesToProcessParams := filesToProcessParams.push (leanFilePathAbs, astJsonPath, depPathsPath, fullModuleName.toString, taskDescr)
         -- No 'else' needed for oleanPath? check; if no .olean, it's skipped entirely.
       -- End of oleanPath?.isSome check
@@ -808,7 +819,7 @@ def processProject : IO Unit := do
     IO.println "[INFO] No files found to process (either none eligible or all outputs already exist)."
     return
 
-  let maxWorkers : Nat := 32
+  let maxWorkers : Nat := 256
   let mut nextFileIndex : Nat := 0
   let totalFilesToProcess := filesToProcessParams.size -- This now reflects files that NEED processing.
 
