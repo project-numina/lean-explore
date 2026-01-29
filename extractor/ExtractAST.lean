@@ -336,15 +336,6 @@ def toSrcDir! (oleanPath : FilePath) (ext : String) : IO FilePath := do
     let srcPath := toolchainSrcParentDir / relativePath
     return System.FilePath.withExtension srcPath ext
 
-    -- let actualSrcParentDir :=
-    --   if relativePath.components.head? == some "Lake" then
-    --     (sysroot / "src" / "lean" / "lake").normalize
-    --   else
-    --     toolchainSrcParentDir -- 这是 (sysroot / "src" / "lean")
-
-    -- let srcPath := actualSrcParentDir / relativePath
-    -- return System.FilePath.withExtension srcPath ext
-
   let trimmedOleanPath := trim oleanPath
 
   -- 2. Handle cases where Lean 4 itself is a local source dependency (less common).
