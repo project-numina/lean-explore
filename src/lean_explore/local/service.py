@@ -204,6 +204,7 @@ class Service:
             primary_declaration=primary_decl_info,
             source_file=sg_orm.source_file,
             range_start_line=sg_orm.range_start_line,
+            range_end_line=sg_orm.range_end_line,
             display_statement_text=sg_orm.display_statement_text,
             statement_text=sg_orm.statement_text,
             docstring=sg_orm.docstring,

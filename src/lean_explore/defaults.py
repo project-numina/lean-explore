@@ -31,7 +31,7 @@ LEAN_EXPLORE_TOOLCHAINS_BASE_DIR: Final[pathlib.Path] = (
 # In future enhancements, this could be determined dynamically
 # or from user configuration.
 # For now, it's set to the initial version of data provided ("0.1.0").
-DEFAULT_ACTIVE_TOOLCHAIN_VERSION: Final[str] = "0.1.0.numina"
+DEFAULT_ACTIVE_TOOLCHAIN_VERSION: Final[str] = "0.6.0.numina"
 
 # Path to the data directory for the currently active toolchain version.
 # Example: ~/.lean_explore/data/toolchains/0.1.0/
@@ -70,7 +70,7 @@ DEFAULT_DB_URL: Final[str] = f"sqlite:///{DEFAULT_DB_PATH.resolve()}"
 
 # Default URL for the master manifest file on R2.
 R2_MANIFEST_DEFAULT_URL: Final[str] = (
-    "https://raw.githubusercontent.com/project-numina/lean-explore/refs/heads/main/manifest.json"
+    "https://lean-explore-data.s3.us-east-1.amazonaws.com/releases/manifest.json"
 )
 
 # Base URL for accessing assets on R2. Specific file paths from the manifest
